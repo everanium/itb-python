@@ -1,0 +1,39 @@
+# Bytecode caches
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Build / distribution artefacts
+build/
+dist/
+*.egg-info/
+*.egg
+*.tar.gz
+*.whl
+pip-wheel-metadata/
+
+# Virtual environments
+.venv/
+venv/
+env/
+.env/
+virtualenv/
+
+# Test / lint / type-checker caches
+.pytest_cache/
+.tox/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+.pytype/
+.dmypy.json
+
+# IDE / editor
+.idea/
+.vscode/
+*.swp
+*.swo

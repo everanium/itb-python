@@ -1,0 +1,987 @@
+# ITB Python Binding
+
+Cffi-based Python wrapper over the libitb shared library
+(`cmd/cshared`). ABI mode — no C compiler at install time, just
+``cffi``.
+
+**Path placeholder.** `<itb>` denotes the path to the local ITB
+repository checkout (or this binding's mirror clone) — for example,
+`/home/you/go/src/itb` or `~/projects/itb-python`. Substitute the
+literal token in the recipes below.
+
+## Prerequisites (Arch Linux)
+
+```bash
+sudo pacman -S go go-tools python python-cffi
+```
+
+## Build the shared library
+
+The convenience driver `bindings/python/build.sh` builds
+`libitb.so` in one step. Run it from anywhere:
+
+```bash
+./bindings/python/build.sh
+```
+
+For hosts without AVX-512+VL CPUs, opt out of the 4-lane batched
+chain-absorb wrapper:
+
+```bash
+./bindings/python/build.sh --noitbasm
+```
+
+The driver wraps the libitb build from the repo root; the Python
+binding loads `libitb.so` at runtime via cffi with no further
+build step on the binding side. Equivalent manual invocation:
+
+```bash
+go build -trimpath -buildmode=c-shared \
+    -o dist/linux-amd64/libitb.so ./cmd/cshared
+```
+
+(macOS produces `libitb.dylib` under `dist/darwin-<arch>/`,
+Windows produces `libitb.dll` under `dist/windows-<arch>/`.)
+
+### Build tags governing hash-kernel selection
+
+| Build flag | ITB chain-absorb asm | Upstream hash asm | Use case |
+|---|---|---|---|
+| (none) | engaged | engaged | Default — full asm stack |
+| <code>‑tags=noitbasm</code> | off | engaged | Hosts without AVX-512+VL where the 4-lane chain-absorb wrapper is dead weight; the encrypt path falls into `process_cgo`'s nil-`BatchHash` branch and drives 4 single-call invocations through the upstream asm directly |
+
+Passing `-tags=noitbasm` does not disable upstream asm in
+`zeebo/blake3`, `golang.org/x/crypto`, or `jedisct1/go-aes`. The
+same `libitb.so` is consumed by every binding; the flag governs
+only the shared library, not the binding language.
+
+## Run tests
+
+```bash
+./bindings/python/run_tests.sh
+```
+
+The harness verifies `libitb.so` is present, exports
+`LD_LIBRARY_PATH`, and invokes
+`python -m unittest discover -v tests`. Positional arguments are
+forwarded straight to unittest (e.g.
+`./run_tests.sh tests/test_blake3.py` to scope the run to one
+file). The integration test suite under `bindings/python/tests/`
+mirrors the cross-binding coverage: Single + Triple Ouroboros,
+mixed primitives, authenticated paths, blob round-trip, streaming
+chunked I/O, error paths, lockSeed lifecycle.
+
+## Library lookup order
+
+1. `ITB_LIBRARY_PATH` environment variable (absolute path).
+2. `<repo>/dist/<os>-<arch>/libitb.<ext>` resolved by walking four
+   directory levels up from `bindings/python/itb/_ffi.py`.
+3. System loader path (`ld.so.cache`, `DYLD_LIBRARY_PATH`, `PATH`).
+
+## Streaming AEAD
+
+**Streaming AEAD** authenticates a chunked stream end-to-end while
+preserving the deniability of the per-chunk MAC-Inside-Encrypt
+container. Each chunk's MAC binds the encrypted payload to a 32-byte
+CSPRNG stream anchor (written as a once-per-stream wire prefix), the
+cumulative pixel offset of preceding chunks, and a final-flag bit —
+defending against chunk reorder, replay within or across streams
+sharing the PRF / MAC key, silent mid-stream drop, and truncate-tail.
+The wire format adds 32 bytes of stream prefix plus one byte of
+encrypted trailing flag per chunk; no externally visible MAC tag.
+
+The two examples below encrypt a 64 MiB random source file in 16 MiB
+chunks and verify a sha256 round-trip on the decrypted output.
+Production deployments typically encrypt files at 1 GiB+ scale through
+the same loop pattern; the chunk size selection (16 MiB here) controls
+per-iteration memory residency.
+
+**Easy Mode:**
+
+`Encryptor.encrypt_stream_auth` consumes a
+binary file-like input, emits the on-wire transcript (32-byte
+`stream_id` prefix + chunked authenticated body) to a binary file-like
+output. The matching `decrypt_stream_auth` reverses the flow on the
+same encryptor. The MAC key is generated CSPRNG-fresh inside the
+encryptor at constructor time and is not exposed to the caller.
+
+```python
+import hashlib
+import os
+import itb
+
+SRC_PATH = "/tmp/64mb.src"
+ENC_PATH = "/tmp/64mb.enc"
+DST_PATH = "/tmp/64mb.dst"
+CHUNK_SIZE = 16 * 1024 * 1024
+
+def sha256_of(path: str) -> str:
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+# Materialise a 64 MiB random source file once.
+if not os.path.exists(SRC_PATH) or os.path.getsize(SRC_PATH) != 64 * 1024 * 1024:
+    with open("/dev/urandom", "rb") as r, open(SRC_PATH, "wb") as w:
+        w.write(r.read(64 * 1024 * 1024))
+
+enc = itb.Encryptor(primitive="areion512", key_bits=1024,
+                    mac="hmac-blake3", mode=1)
+try:
+    with open(SRC_PATH, "rb") as fin, open(ENC_PATH, "wb") as fout:
+        enc.encrypt_stream_auth(fin, fout, chunk_size=CHUNK_SIZE)
+    with open(ENC_PATH, "rb") as fin, open(DST_PATH, "wb") as fout:
+        enc.decrypt_stream_auth(fin, fout, read_size=CHUNK_SIZE)
+finally:
+    enc.close()
+
+src_hash = sha256_of(SRC_PATH)
+dst_hash = sha256_of(DST_PATH)
+print(f"Easy Mode src sha256: {src_hash}")
+print(f"Easy Mode dst sha256: {dst_hash}")
+assert src_hash == dst_hash
+print("[OK] Easy Mode: 64 MiB roundtrip via stream-auth verified")
+```
+
+**Build + run:**
+
+```sh
+# One-time install of the binding from the repo (editable mode).
+pip install -e <itb>/bindings/python
+
+# Place the source above in <itb>/python_example/main.py and run:
+cd <itb>/python_example && python3 main.py
+```
+
+The binding's library-lookup logic locates
+`<itb>/dist/<os>-<arch>/libitb.so` automatically once the editable
+install resolves the `itb` package — no `ITB_LIBRARY_PATH` export is
+required when the shared library lives under the repository's
+canonical `dist/` tree. Override with `ITB_LIBRARY_PATH=/abs/path` to
+point at a non-canonical build.
+
+**Output (verified):**
+
+```
+Easy Mode src sha256: 7adc82f9bebf205db2a6c8033d7c1fe43d3bf8b3ecb0fbfd6c4c2dff71672425
+Easy Mode dst sha256: 7adc82f9bebf205db2a6c8033d7c1fe43d3bf8b3ecb0fbfd6c4c2dff71672425
+[OK] Easy Mode: 64 MiB roundtrip via stream-auth verified
+```
+
+---
+
+**Low-Level Mode:**
+
+Module-level free functions
+`itb.encrypt_stream_auth` / `itb.decrypt_stream_auth` take three
+explicit `Seed` handles plus an explicitly constructed `itb.MAC`
+(32-byte key drawn from `os.urandom`) and stream through the same
+chunked-AEAD construction. The seeds and MAC handle are caller-owned
+and must be freed when no longer needed.
+
+```python
+import hashlib
+import os
+import itb
+
+SRC_PATH = "/tmp/64mb.src"
+ENC_PATH = "/tmp/64mb.enc"
+DST_PATH = "/tmp/64mb.dst"
+CHUNK_SIZE = 16 * 1024 * 1024
+
+def sha256_of(path: str) -> str:
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+noise = itb.Seed("areion512", 1024)
+data  = itb.Seed("areion512", 1024)
+start = itb.Seed("areion512", 1024)
+mac_key = os.urandom(32)
+mac = itb.MAC("hmac-blake3", mac_key)
+try:
+    with open(SRC_PATH, "rb") as fin, open(ENC_PATH, "wb") as fout:
+        itb.encrypt_stream_auth(noise, data, start, mac, fin, fout,
+                                chunk_size=CHUNK_SIZE)
+    with open(ENC_PATH, "rb") as fin, open(DST_PATH, "wb") as fout:
+        itb.decrypt_stream_auth(noise, data, start, mac, fin, fout,
+                                read_size=CHUNK_SIZE)
+finally:
+    mac.free()
+    noise.free(); data.free(); start.free()
+
+src_hash = sha256_of(SRC_PATH)
+dst_hash = sha256_of(DST_PATH)
+print(f"Low-Level src sha256: {src_hash}")
+print(f"Low-Level dst sha256: {dst_hash}")
+assert src_hash == dst_hash
+print("[OK] Low-Level Mode: 64 MiB roundtrip via stream-auth verified")
+```
+
+**Build + run:**
+
+```sh
+cd <itb>/python_example && python3 main.py
+```
+
+**Output (verified):**
+
+```
+Low-Level src sha256: 7adc82f9bebf205db2a6c8033d7c1fe43d3bf8b3ecb0fbfd6c4c2dff71672425
+Low-Level dst sha256: 7adc82f9bebf205db2a6c8033d7c1fe43d3bf8b3ecb0fbfd6c4c2dff71672425
+[OK] Low-Level Mode: 64 MiB roundtrip via stream-auth verified
+```
+
+The full-flow examples use `areion512` PRF + 1024-bit ITB key +
+`hmac-blake3` authenticator. The Easy Mode `Encryptor` constructor
+does not accept a `mac_key` parameter — the MAC key is allocated
+CSPRNG-fresh at construction time and lives entirely inside the
+encryptor. The 32-byte `mac_key` argument shape applies only to the
+low-level `itb.MAC(name, key)` constructor.
+
+## Quick Start — `itb.Encryptor` (No MAC)
+
+The high-level :class:`itb.Encryptor` (mirroring the
+``github.com/everanium/itb/easy`` Go sub-package) replaces the
+seven-line setup ceremony of the lower-level
+``Seed`` / ``encrypt`` / ``decrypt`` path with one constructor call:
+the encryptor allocates its own three (Single) or seven (Triple)
+seeds + MAC closure, snapshots the global configuration into a
+per-instance Config, and exposes setters that mutate only its own
+state without touching the process-wide ``itb.set_*`` accessors.
+Two encryptors with different settings can run concurrently without
+cross-contamination.
+
+```python
+# Sender
+
+import itb
+
+# Per-instance configuration — mutates only this encryptor's Config.
+# Two encryptors built side-by-side carry independent settings;
+# process-wide itb.set_* accessors are NOT consulted after
+# construction.
+with itb.Encryptor("areion512", 2048, "hmac-blake3") as enc:
+    enc.set_nonce_bits(512)   # 512-bit nonce (default: 128-bit)
+    enc.set_barrier_fill(4)   # CSPRNG fill margin (default: 1, valid: 1, 2, 4, 8, 16, 32)
+    enc.set_bit_soup(1)       # optional bit-level split ("bit-soup"; default: 0 = byte-level)
+                              # auto-enabled for Single Ouroboros if set_lock_soup(1) is on
+    enc.set_lock_soup(1)      # optional Insane Interlocked Mode: per-chunk PRF-keyed
+                              # bit-permutation overlay on top of bit-soup;
+                              # auto-enabled for Single Ouroboros if set_bit_soup(1) is on
+
+    #enc.set_lock_seed(1)     # optional dedicated lockSeed for the bit-permutation
+                              # derivation channel — separates that PRF's keying material
+                              # from the noiseSeed-driven noise-injection channel; auto-
+                              # couples set_lock_soup(1) + set_bit_soup(1). Adds one
+                              # extra seed slot (3 → 4 for Single, 7 → 8 for Triple).
+                              # Must be called BEFORE the first encrypt — switching
+                              # mid-session raises ITBError(STATUS_EASY_LOCKSEED_AFTER_ENCRYPT).
+
+    # For cross-process persistence: enc.export() returns a single
+    # JSON blob carrying PRF keys, seed components, MAC key, and
+    # (when active) the dedicated lockSeed material. Ship it
+    # alongside the ciphertext or out-of-band.
+    blob = enc.export()
+    print(f"state blob: {len(blob)} bytes")
+    print(f"primitive: {enc.primitive}, key_bits: {enc.key_bits}, "
+          f"mode: {enc.mode}, mac: {enc.mac_name}")
+
+    plaintext = b"any text or binary data - including 0x00 bytes"
+    #chunk_size = 4 * 1024 * 1024  # 4 MB - bulk local crypto, not small-frame network streaming
+    #read_size  = 64 * 1024        # app-driven feed granularity (independent of chunk_size)
+
+    # One-shot encrypt into RGBWYOPA container.
+    encrypted = enc.encrypt(plaintext)
+    print(f"encrypted: {len(encrypted)} bytes")
+
+    # Streaming alternative — the application drives chunk boundaries
+    # by slicing plaintext into chunk_size pieces and calling
+    # enc.encrypt() per chunk. enc.header_size + enc.parse_chunk_len
+    # are per-instance accessors (track this encryptor's own
+    # nonce_bits, NOT the process-wide itb.header_size).
+    #from io import BytesIO
+    #cbuf = BytesIO()
+    #for i in range(0, len(plaintext), chunk_size):
+    #    cbuf.write(enc.encrypt(plaintext[i:i+chunk_size]))
+    #encrypted = cbuf.getvalue()
+
+    # Send encrypted payload + state blob
+
+
+# Receiver
+
+import itb
+
+# Receive encrypted payload + state blob
+# encrypted = ...
+# blob = ...
+
+# Optional: peek at the blob's metadata before constructing a
+# matching encryptor. Useful when the receiver multiplexes blobs
+# of different shapes (different primitive / mode / MAC choices).
+prim, key_bits, mode, mac = itb.peek_config(blob)
+print(f"peek: primitive={prim}, key_bits={key_bits}, mode={mode}, mac={mac}")
+
+with itb.Encryptor(prim, key_bits, mac, mode=mode) as dec:
+    # dec.import_state(blob) below automatically restores the full
+    # per-instance configuration (nonce_bits, barrier_fill, bit_soup,
+    # lock_soup, and the dedicated lockSeed material when sender's
+    # set_lock_seed(1) was active). The set_*() lines below are kept
+    # for documentation — they show the knobs available for explicit
+    # pre-Import override. barrier_fill is asymmetric: a receiver-set
+    # value > 1 takes priority over the blob's barrier_fill (the
+    # receiver's heavier CSPRNG margin is preserved across Import).
+    dec.set_nonce_bits(512)
+    dec.set_barrier_fill(4)
+    dec.set_bit_soup(1)
+    dec.set_lock_soup(1)
+    #dec.set_lock_seed(1)     # optional — Import below restores the dedicated
+                              # lockSeed slot from the blob's lock_seed:true.
+
+    # Restore PRF keys, seed components, MAC key, and the per-instance
+    # configuration overrides (nonce_bits / barrier_fill / bit_soup /
+    # lock_soup / lock_seed) from the saved blob.
+    dec.import_state(blob)
+
+    #read_size = 64 * 1024  # app-driven feed granularity
+
+    # One-shot decrypt from RGBWYOPA container.
+    decrypted = dec.decrypt(encrypted)
+    print(f"decrypted: {decrypted.decode()}")
+
+    # Streaming alternative — walk concatenated chunks by reading
+    # dec.header_size bytes, calling dec.parse_chunk_len(buf), reading
+    # the remaining body, and feeding the full chunk to dec.decrypt().
+    #from io import BytesIO
+    #cin = BytesIO(encrypted)
+    #pbuf = BytesIO()
+    #accumulator = bytearray()
+    #while True:
+    #    buf = cin.read(read_size)
+    #    if not buf: break
+    #    accumulator.extend(buf)
+    #    while len(accumulator) >= dec.header_size:
+    #        chunk_len = dec.parse_chunk_len(bytes(accumulator[:dec.header_size]))
+    #        if len(accumulator) < chunk_len: break
+    #        pbuf.write(dec.decrypt(bytes(accumulator[:chunk_len])))
+    #        del accumulator[:chunk_len]
+    #decrypted = pbuf.getvalue()
+```
+
+## Quick Start — `itb.Encryptor` + HMAC-BLAKE3 (MAC Authenticated)
+
+The MAC primitive is bound at construction time — the third positional
+argument to :class:`itb.Encryptor` selects one of the registry names
+(``hmac-blake3`` — recommended default, ``kmac256``, ``hmac-sha256``).
+The encryptor
+allocates a fresh 32-byte CSPRNG MAC key alongside the per-seed PRF
+keys; ``enc.export()`` carries all of them in a single JSON blob. On
+the receiver side, ``dec.import_state(blob)`` restores the MAC key
+together with the seeds, so the encrypt-today / decrypt-tomorrow flow
+is one method call per side.
+
+```python
+# Sender
+
+import itb
+
+with itb.Encryptor("areion512", 2048, "hmac-blake3") as enc:
+    enc.set_nonce_bits(512)   # per-instance — does NOT touch process-wide state
+    enc.set_barrier_fill(4)
+    enc.set_bit_soup(1)
+    enc.set_lock_soup(1)
+
+    #enc.set_lock_seed(1)     # optional dedicated lockSeed for the bit-permutation
+                              # derivation channel — auto-couples set_lock_soup(1) +
+                              # set_bit_soup(1). Adds one extra seed slot
+                              # (3 → 4 for Single, 7 → 8 for Triple). Must be
+                              # called BEFORE the first encrypt_auth — switching
+                              # mid-session raises ITBError(STATUS_EASY_LOCKSEED_AFTER_ENCRYPT).
+
+    # Persistence blob — carries seeds + PRF keys + MAC key (and the
+    # dedicated lockSeed material when set_lock_seed(1) is active).
+    blob = enc.export()
+    print(f"state blob: {len(blob)} bytes")
+
+    plaintext = b"any text or binary data - including 0x00 bytes"
+    #chunk_size = 4 * 1024 * 1024
+
+    # Authenticated encrypt — 32-byte tag is computed across the
+    # entire decrypted capacity and embedded inside the RGBWYOPA
+    # container, preserving oracle-free deniability.
+    encrypted = enc.encrypt_auth(plaintext)
+    print(f"encrypted: {len(encrypted)} bytes")
+
+    # Streaming alternative — slice plaintext into chunk_size pieces
+    # and call enc.encrypt_auth() per chunk; each chunk carries its
+    # own MAC tag. enc.header_size + enc.parse_chunk_len are
+    # per-instance accessors.
+    #from io import BytesIO
+    #cbuf = BytesIO()
+    #for i in range(0, len(plaintext), chunk_size):
+    #    cbuf.write(enc.encrypt_auth(plaintext[i:i+chunk_size]))
+    #encrypted = cbuf.getvalue()
+
+    # Send encrypted payload + state blob
+
+
+# Receiver
+
+import itb
+
+# Receive encrypted payload + state blob
+# encrypted = ...
+# blob = ...
+
+itb.set_max_workers(8)        # limit to 8 CPU cores (default: 0 = all CPUs)
+
+prim, key_bits, mode, mac = itb.peek_config(blob)
+
+with itb.Encryptor(prim, key_bits, mac, mode=mode) as dec:
+    # dec.import_state(blob) below automatically restores the full
+    # per-instance configuration (nonce_bits, barrier_fill, bit_soup,
+    # lock_soup, and the dedicated lockSeed material when sender's
+    # set_lock_seed(1) was active). The set_*() lines below are kept
+    # for documentation — they show the knobs available for explicit
+    # pre-Import override. barrier_fill is asymmetric: a receiver-set
+    # value > 1 takes priority over the blob's barrier_fill (the
+    # receiver's heavier CSPRNG margin is preserved across Import).
+    dec.set_nonce_bits(512)
+    dec.set_barrier_fill(4)
+    dec.set_bit_soup(1)
+    dec.set_lock_soup(1)
+    #dec.set_lock_seed(1)     # optional — Import below restores the dedicated
+                              # lockSeed slot from the blob's lock_seed:true.
+
+    dec.import_state(blob)
+
+    # Authenticated decrypt — any single-bit tamper triggers MAC
+    # failure (no oracle leak about which byte was tampered).
+    # Mismatch surfaces as ITBError(STATUS_MAC_FAILURE), not a
+    # corrupted plaintext.
+    try:
+        decrypted = dec.decrypt_auth(encrypted)
+        print(f"decrypted: {decrypted.decode()}")
+    except itb.ITBError as e:
+        if e.code == itb._ffi.STATUS_MAC_FAILURE:
+            print("MAC verification failed — tampered or wrong key")
+        else:
+            raise
+
+    # Streaming alternative — walk the chunk stream, decrypt_auth
+    # each chunk; any tamper inside any chunk surfaces as
+    # ITBError(STATUS_MAC_FAILURE) on that chunk.
+    #from io import BytesIO
+    #cin = BytesIO(encrypted)
+    #pbuf = BytesIO()
+    #accumulator = bytearray()
+    #while True:
+    #    buf = cin.read(64 * 1024)
+    #    if not buf: break
+    #    accumulator.extend(buf)
+    #    while len(accumulator) >= dec.header_size:
+    #        chunk_len = dec.parse_chunk_len(bytes(accumulator[:dec.header_size]))
+    #        if len(accumulator) < chunk_len: break
+    #        pbuf.write(dec.decrypt_auth(bytes(accumulator[:chunk_len])))
+    #        del accumulator[:chunk_len]
+    #decrypted = pbuf.getvalue()
+```
+
+## Quick Start — Mixed primitives (Different PRF per seed slot)
+
+`itb.Encryptor.mixed_single` and `itb.Encryptor.mixed_triple`
+classmethods accept per-slot primitive names — the noise / data /
+start (and optional dedicated lockSeed) seed slots can use
+different PRF primitives within the same native hash width. The
+mix-and-match-PRF freedom of the lower-level path, surfaced
+through the high-level :class:`itb.Encryptor` without forcing
+the caller off the Easy Mode constructor. The state blob carries
+per-slot primitives + per-slot PRF keys; the receiver constructs
+a matching encryptor with the same arguments and calls
+``import_state`` to restore.
+
+```python
+# Sender
+
+import itb
+
+# Per-slot primitive selection (Single Ouroboros, 3 + 1 slots).
+# Every name must share the same native hash width — mixing widths
+# raise ITBError at construction time.
+# Triple Ouroboros mirror — itb.Encryptor.mixed_triple takes seven
+# per-slot names (noise + 3 data + 3 start) plus the optional
+# primitive_l lockSeed.
+enc = itb.Encryptor.mixed_single(
+    primitive_n="blake3",       # noiseSeed:  BLAKE3
+    primitive_d="blake2s",      # dataSeed:   BLAKE2s
+    primitive_s="areion256",    # startSeed:  Areion-SoEM-256
+    primitive_l="blake2b256",   # dedicated lockSeed (optional;
+                                #   omit for no lockSeed slot)
+    key_bits=1024,
+    mac="hmac-blake3",
+)
+try:
+    # Per-instance configuration applies as for itb.Encryptor(...).
+    enc.set_nonce_bits(512)
+    enc.set_barrier_fill(4)
+    # BitSoup + LockSoup are auto-coupled on the on-direction by
+    # primitive_l above; explicit calls below are unnecessary but
+    # harmless if added.
+    #enc.set_bit_soup(1)
+    #enc.set_lock_soup(1)
+
+    # Per-slot introspection — primitive returns "mixed" literal,
+    # primitive_at(slot) returns each slot's name, is_mixed is the
+    # typed predicate. Slot ordering is canonical: 0 = noiseSeed,
+    # 1 = dataSeed, 2 = startSeed, 3 = lockSeed (Single); Triple
+    # grows the middle range to 7 slots + lockSeed.
+    print(f"mixed={enc.is_mixed} primitive={enc.primitive!r}")
+    for i in range(4):
+        print(f"  slot {i}: {enc.primitive_at(i)}")
+
+    blob = enc.export()
+    print(f"state blob: {len(blob)} bytes")
+
+    plaintext = b"mixed-primitive Easy Mode payload"
+
+    # Authenticated encrypt — 32-byte tag is computed across the
+    # entire decrypted capacity and embedded inside the RGBWYOPA
+    # container, preserving oracle-free deniability.
+    encrypted = enc.encrypt_auth(plaintext)
+    print(f"encrypted: {len(encrypted)} bytes")
+
+    # Send encrypted payload + state blob
+finally:
+    enc.close()
+
+
+# Receiver
+
+import itb
+
+# Receive encrypted payload + state blob
+# encrypted = ...
+# blob = ...
+
+# Receiver constructs a matching mixed encryptor — every per-slot
+# primitive name plus key_bits and mac must agree with the sender.
+# import_state validates each per-slot primitive against the
+# receiver's bound spec; mismatches raise ITBError with the
+# "primitive" field tag.
+dec = itb.Encryptor.mixed_single(
+    primitive_n="blake3",
+    primitive_d="blake2s",
+    primitive_s="areion256",
+    primitive_l="blake2b256",
+    key_bits=1024,
+    mac="hmac-blake3",
+)
+try:
+    # Restore PRF keys, seed components, MAC key, and the per-
+    # instance configuration overrides from the saved blob. Mixed
+    # blobs carry mixed:true plus a primitives array; import_state
+    # on a single-primitive receiver (or vice versa) is rejected as
+    # a primitive mismatch.
+    dec.import_state(blob)
+
+    decrypted = dec.decrypt_auth(encrypted)
+    print(f"decrypted: {decrypted.decode()}")
+finally:
+    dec.close()
+```
+
+## Quick Start — Areion-SoEM-512 (Low-level, No MAC)
+
+```python
+# Sender
+
+import itb
+
+# Optional: global configuration (all process-wide, atomic)
+itb.set_max_workers(8)        # limit to 8 CPU cores (default: 0 = all CPUs)
+itb.set_nonce_bits(512)       # 512-bit nonce (default: 128-bit)
+itb.set_barrier_fill(4)       # CSPRNG fill margin (default: 1, valid: 1,2,4,8,16,32)
+
+itb.set_bit_soup(1)           # optional bit-level split ("bit-soup"; default: 0 = byte-level)
+                              # automatically enabled for Single Ouroboros if
+                              # itb.set_lock_soup(1) is enabled or vice versa
+
+itb.set_lock_soup(1)          # optional Insane Interlocked Mode: per-chunk PRF-keyed
+                              # bit-permutation overlay on top of bit-soup;
+                              # automatically enabled for Single Ouroboros if
+                              # itb.set_bit_soup(1) is enabled or vice versa
+
+# Three independent CSPRNG-keyed Areion-SoEM-512 seeds. Each Seed
+# pre-keys its primitive once at construction; the C ABI / FFI
+# layer auto-wires the AVX-512 + VAES + ILP + ZMM-batched chain-
+# absorb dispatch through Seed.BatchHash — no manual batched-arm
+# attachment is required on the Python side.
+ns = itb.Seed("areion512", 2048)  # random noise CSPRNG seeds + hash key generated
+ds = itb.Seed("areion512", 2048)  # random data  CSPRNG seeds + hash key generated
+ss = itb.Seed("areion512", 2048)  # random start CSPRNG seeds + hash key generated
+
+# Optional: dedicated lockSeed for the bit-permutation derivation
+# channel. Separates that PRF's keying material from the noiseSeed-
+# driven noise-injection channel without changing the public encrypt
+# / decrypt signatures. The bit-permutation overlay must be engaged
+# (itb.set_bit_soup(1) or itb.set_lock_soup(1) — both already on
+# above) before the first encrypt; the build-PRF guard panics on
+# encrypt-time when an attach is present without either flag.
+ls = itb.Seed("areion512", 2048)  # random lock CSPRNG seeds + hash key generated
+ns.attach_lock_seed(ls)
+
+plaintext = b"any text or binary data - including 0x00 bytes"
+#chunk_size = 4 * 1024 * 1024  # 4 MB - bulk local crypto, not small-frame network streaming
+#read_size  = 64 * 1024        # app-driven feed granularity (independent of chunk_size)
+
+try:
+    # Encrypt into RGBWYOPA container
+    encrypted = itb.encrypt(ns, ds, ss, plaintext)
+    print(f"encrypted: {len(encrypted)} bytes")
+
+    # Streaming alternative — the application drives chunk
+    # boundaries through StreamEncryptor.write(); the encryptor
+    # buffers up to chunk_size bytes before emitting one ITB
+    # chunk to fout, with the tail flushed on close().
+    #from io import BytesIO
+    #fout = BytesIO()
+    #with itb.StreamEncryptor(ns, ds, ss, fout, chunk_size=chunk_size) as enc:
+    #    for i in range(0, len(plaintext), read_size):
+    #        enc.write(plaintext[i:i+read_size])
+    #ciphertext = fout.getvalue()
+
+    # For cross-process persistence: itb.Blob512 packs every seed's
+    # hash key + components and the captured process-wide globals
+    # (nonce_bits / barrier_fill / bit_soup / lock_soup) into one
+    # JSON blob — the Sender ships blob_bytes alongside the
+    # ciphertext (or out-of-band). The receiver round-trips back
+    # to working seeds via Blob512.import_blob below.
+    with itb.Blob512() as blob:
+        blob.set_key("n", ns.hash_key); blob.set_components("n", ns.components)
+        blob.set_key("d", ds.hash_key); blob.set_components("d", ds.components)
+        blob.set_key("s", ss.hash_key); blob.set_components("s", ss.components)
+        blob.set_key("l", ls.hash_key); blob.set_components("l", ls.components)
+        blob_bytes = blob.export(lockseed=True)
+    print(f"persistence blob: {len(blob_bytes)} bytes")
+
+    # Send encrypted payload + blob_bytes
+finally:
+    ns.free(); ds.free(); ss.free(); ls.free()
+
+
+# Receiver
+
+import itb
+
+itb.set_max_workers(8)        # deployment knob — not serialised by Blob512
+
+# Receive encrypted payload + blob_bytes
+# encrypted = ...; blob_bytes = ...
+
+# Blob512.import_blob applies the captured globals (nonce_bits /
+# barrier_fill / bit_soup / lock_soup) via the process-wide setters
+# AND populates per-slot hash keys + components. The Receiver does
+# NOT need to set these four globals manually — the blob is the
+# single source of truth for both the encryptor material and the
+# runtime configuration that produced the ciphertext.
+restored = itb.Blob512()
+restored.import_blob(blob_bytes)
+
+ns = itb.Seed.from_components("areion512", restored.get_components("n"), restored.get_key("n"))
+ds = itb.Seed.from_components("areion512", restored.get_components("d"), restored.get_key("d"))
+ss = itb.Seed.from_components("areion512", restored.get_components("s"), restored.get_key("s"))
+ls = itb.Seed.from_components("areion512", restored.get_components("l"), restored.get_key("l"))
+restored.free()
+ns.attach_lock_seed(ls)
+
+#read_size = 64 * 1024  # app-driven feed granularity
+
+try:
+    # Decrypt from RGBWYOPA container
+    decrypted = itb.decrypt(ns, ds, ss, encrypted)
+    print(f"decrypted: {decrypted.decode()}")
+
+    # Streaming alternative — the application drives chunk
+    # boundaries through StreamDecryptor.feed(); the decryptor
+    # parses ITB chunk headers from the fed stream and emits
+    # plaintext to fout as each chunk completes.
+    #from io import BytesIO
+    #fout = BytesIO()
+    #with itb.StreamDecryptor(ns, ds, ss, fout) as dec:
+    #    for i in range(0, len(encrypted), read_size):
+    #        dec.feed(encrypted[i:i+read_size])
+    #decrypted = fout.getvalue()
+finally:
+    ns.free(); ds.free(); ss.free(); ls.free()
+```
+
+## Quick Start — Areion-SoEM-512 + HMAC-BLAKE3 (Low-Level, MAC Authenticated)
+
+```python
+# Sender
+
+import itb
+import secrets
+
+# Optional: global configuration (all process-wide, atomic)
+itb.set_max_workers(8)        # limit to 8 CPU cores (default: 0 = all CPUs)
+itb.set_nonce_bits(512)       # 512-bit nonce (default: 128-bit)
+itb.set_barrier_fill(4)       # CSPRNG fill margin (default: 1, valid: 1,2,4,8,16,32)
+
+itb.set_bit_soup(1)           # optional bit-level split ("bit-soup"; default: 0 = byte-level)
+                              # automatically enabled for Single Ouroboros if
+                              # itb.set_lock_soup(1) is enabled or vice versa
+
+itb.set_lock_soup(1)          # optional Insane Interlocked Mode: per-chunk PRF-keyed
+                              # bit-permutation overlay on top of bit-soup;
+                              # automatically enabled for Single Ouroboros if
+                              # itb.set_bit_soup(1) is enabled or vice versa
+
+ns = itb.Seed("areion512", 2048)
+ds = itb.Seed("areion512", 2048)
+ss = itb.Seed("areion512", 2048)
+
+# Optional: dedicated lockSeed for the bit-permutation derivation
+# channel — same pattern as the no-MAC quick-start above.
+ls = itb.Seed("areion512", 2048)
+ns.attach_lock_seed(ls)
+
+# HMAC-BLAKE3 — 32-byte CSPRNG key, 32-byte tag.
+mac_key = secrets.token_bytes(32)
+mac = itb.MAC("hmac-blake3", mac_key)
+
+plaintext = b"any text or binary data - including 0x00 bytes"
+
+try:
+    # Authenticated encrypt — 32-byte tag is computed across the
+    # entire decrypted capacity and embedded inside the RGBWYOPA
+    # container, preserving oracle-free deniability.
+    encrypted = itb.encrypt_auth(ns, ds, ss, mac, plaintext)
+    print(f"encrypted: {len(encrypted)} bytes")
+
+    # Cross-process persistence: itb.Blob512 packs every seed's
+    # hash key + components, the optional dedicated lockSeed, and
+    # the MAC key + name into one JSON blob alongside the captured
+    # process-wide globals. lockseed=True / mac=True opt the
+    # corresponding sections in.
+    with itb.Blob512() as blob:
+        blob.set_key("n", ns.hash_key); blob.set_components("n", ns.components)
+        blob.set_key("d", ds.hash_key); blob.set_components("d", ds.components)
+        blob.set_key("s", ss.hash_key); blob.set_components("s", ss.components)
+        blob.set_key("l", ls.hash_key); blob.set_components("l", ls.components)
+        blob.set_mac_key(mac_key); blob.set_mac_name("hmac-blake3")
+        blob_bytes = blob.export(lockseed=True, mac=True)
+    print(f"persistence blob: {len(blob_bytes)} bytes")
+
+    # Send encrypted payload + blob_bytes
+finally:
+    mac.free()
+    ns.free(); ds.free(); ss.free(); ls.free()
+
+
+# Receiver
+
+import itb
+
+itb.set_max_workers(8)        # deployment knob — not serialised by Blob512
+
+# Receive encrypted payload + blob_bytes
+# encrypted = ...; blob_bytes = ...
+
+# Blob512.import_blob restores per-slot hash keys + components AND
+# applies the captured globals (nonce_bits / barrier_fill / bit_soup
+# / lock_soup) via the process-wide setters.
+restored = itb.Blob512()
+restored.import_blob(blob_bytes)
+
+ns = itb.Seed.from_components("areion512", restored.get_components("n"), restored.get_key("n"))
+ds = itb.Seed.from_components("areion512", restored.get_components("d"), restored.get_key("d"))
+ss = itb.Seed.from_components("areion512", restored.get_components("s"), restored.get_key("s"))
+ls = itb.Seed.from_components("areion512", restored.get_components("l"), restored.get_key("l"))
+ns.attach_lock_seed(ls)
+
+mac = itb.MAC(restored.get_mac_name(), restored.get_mac_key())
+restored.free()
+
+try:
+    # Authenticated decrypt — any single-bit tamper triggers MAC
+    # failure (no oracle leak about which byte was tampered).
+    decrypted = itb.decrypt_auth(ns, ds, ss, mac, encrypted)
+    print(f"decrypted: {decrypted.decode()}")
+finally:
+    mac.free()
+    ns.free(); ds.free(); ss.free(); ls.free()
+```
+
+## Hash primitives (Single / Triple)
+
+Names match the canonical `hashes/` registry: `areion256`,
+`areion512`, `siphash24`, `aescmac`, `blake2b256`, `blake2b512`,
+`blake2s`, `blake3`, `chacha20`. Triple Ouroboros (3× security)
+takes seven seeds (one shared `noiseSeed` plus three `dataSeed`
+and three `startSeed`) via `itb.encrypt_triple` /
+`itb.decrypt_triple` and the authenticated counterparts
+`itb.encrypt_auth_triple` / `itb.decrypt_auth_triple`. Streaming
+counterparts: `itb.StreamEncryptor3` / `itb.StreamDecryptor3` /
+`itb.encrypt_stream_triple` / `itb.decrypt_stream_triple`.
+
+All seeds passed to one `encrypt` / `decrypt` call must share the
+same native hash width. Mixing widths raises
+`ITBError(STATUS_SEED_WIDTH_MIX)`.
+
+## Process-wide configuration
+
+Every setter takes effect for all subsequent encrypt / decrypt
+calls in the process. Out-of-range values raise
+`ITBError(STATUS_BAD_INPUT)` rather than crashing.
+
+| Function | Accepted values | Default |
+|---|---|---|
+| `set_max_workers(n)` | non-negative int | 0 (auto) |
+| `set_nonce_bits(n)` | 128, 256, 512 | 128 |
+| `set_barrier_fill(n)` | 1, 2, 4, 8, 16, 32 | 1 |
+| `set_bit_soup(mode)` | 0 (off), non-zero (on) | 0 |
+| `set_lock_soup(mode)` | 0 (off), non-zero (on) | 0 |
+
+Read-only constants: `itb.max_key_bits()`, `itb.channels()`,
+`itb.header_size()`, `itb.version()`.
+
+For low-level chunk parsing (e.g. when implementing custom file
+formats around ITB chunks): `itb.parse_chunk_len(header)` inspects
+the fixed-size chunk header and returns the chunk's total
+on-the-wire length; `itb.header_size()` returns the active header
+byte count (20 / 36 / 68 for nonce sizes 128 / 256 / 512 bits).
+
+## Concurrency
+
+The libitb shared library exposes process-wide configuration through
+a small set of atomics (`set_nonce_bits`, `set_barrier_fill`,
+`set_bit_soup`, `set_lock_soup`, `set_max_workers`). Multiple threads
+calling these setters concurrently without external coordination
+will race for the final value visible to subsequent encrypt /
+decrypt calls — serialise the mutators behind a `threading.Lock` (or
+set them once at startup before spawning workers) when multiple
+Python threads need to touch them.
+
+Per-encryptor configuration via `Encryptor.set_nonce_bits` /
+`Encryptor.set_barrier_fill` / `Encryptor.set_bit_soup` /
+`Encryptor.set_lock_soup` mutates only that handle's Config copy and
+is safe to call from the owning thread without affecting other
+`Encryptor` instances. The cipher methods (`Encryptor.encrypt` /
+`Encryptor.decrypt` / `Encryptor.encrypt_auth` /
+`Encryptor.decrypt_auth`) write into the per-instance output-buffer
+cache; sharing one `Encryptor` across threads requires external
+synchronisation. Distinct `Encryptor` instances, each owned by one
+thread, run independently against the libitb worker pool.
+
+By contrast, the low-level cipher free functions (`itb.encrypt` /
+`itb.decrypt` / `itb.encrypt_auth` / `itb.decrypt_auth` plus the
+Triple counterparts) allocate output per call and are **thread-safe**
+under concurrent invocation on the same `Seed` handles — libitb's
+worker pool dispatches them independently. Two exceptions:
+`Seed.attach_lock_seed` mutates the noise Seed and must not race
+against an in-flight cipher call on it, and the process-wide setters
+above stay process-global.
+
+The wrapper objects (`Seed`, `MAC`, `Encryptor`, `Blob128` /
+`Blob256` / `Blob512`, `StreamEncryptor` / `StreamDecryptor`) are
+plain Python classes whose `__del__` finalisers call the matching
+libitb release entry points; the FFI-call layer is synchronous and
+holds the GIL, so the §11.j keepAlive trap that JIT-compiled GC
+runtimes require is N/A here — Python's reference count keeps the
+wrapper alive across the FFI call. Use `with Encryptor(...) as enc:`
+for deterministic close.
+
+## Error model
+
+Every failure surfaces as `ITBError` (or one of the four typed
+subclasses) with a `code` field and a textual message:
+
+```python
+try:
+    itb.MAC("nonsense", b"\0" * 32)
+except itb.ITBError as e:
+    print(e.code, e)  # e.code == itb._ffi.STATUS_BAD_MAC
+```
+
+The typed-exception hierarchy:
+
+- `ITBError` — base class; carries `code` + the textual message.
+- `EasyMismatchError` — Easy Mode `import_state` rejected a field;
+  the offending JSON field name is on `.field`.
+- `BlobModeMismatchError` — Blob receiver rejected a Single-vs-Triple
+  wire mismatch.
+- `BlobMalformedError` — Blob payload failed structural checks.
+- `BlobVersionTooNewError` — Blob version field higher than this
+  libitb build supports.
+
+Status codes are documented in `cmd/cshared/internal/capi/errors.go`
+and mirrored as `itb._ffi.STATUS_*` constants. Type / value-input
+errors raise `TypeError` / `ValueError` (e.g. `plaintext` not
+bytes-like, `chunk_size` ≤ 0); only libitb-side failures route
+through `ITBError`.
+
+Note: empty plaintext / ciphertext is rejected by libitb itself
+with `ITBError(STATUS_ENCRYPT_FAILED)` ("itb: empty data") on every
+cipher entry point. Pass at least one byte.
+
+### Status codes
+
+| Code | Name | Description |
+|---|---|---|
+| 0 | `STATUS_OK` | Success — the only non-failure return value |
+| 1 | `STATUS_BAD_HASH` | Unknown hash primitive name |
+| 2 | `STATUS_BAD_KEY_BITS` | ITB key width invalid for the chosen primitive |
+| 3 | `STATUS_BAD_HANDLE` | FFI handle invalid or already freed |
+| 4 | `STATUS_BAD_INPUT` | Generic shape / range / domain violation on a call argument |
+| 5 | `STATUS_BUFFER_TOO_SMALL` | Output buffer cap below required size; probe-then-allocate idiom |
+| 6 | `STATUS_ENCRYPT_FAILED` | Encrypt path raised on the Go side (rare; structural / OOM) |
+| 7 | `STATUS_DECRYPT_FAILED` | Decrypt path raised on the Go side (corrupt ciphertext shape) |
+| 8 | `STATUS_SEED_WIDTH_MIX` | Seeds passed to one call do not share the same native hash width |
+| 9 | `STATUS_BAD_MAC` | Unknown MAC name or key-length violates the primitive's `min_key_bytes` |
+| 10 | `STATUS_MAC_FAILURE` | MAC verification failed — tampered ciphertext or wrong MAC key |
+| 11 | `STATUS_EASY_CLOSED` | Easy Mode encryptor call after `close()` |
+| 12 | `STATUS_EASY_MALFORMED` | Easy Mode `import_state` blob fails JSON parse / structural check |
+| 13 | `STATUS_EASY_VERSION_TOO_NEW` | Easy Mode blob version field higher than this build supports |
+| 14 | `STATUS_EASY_UNKNOWN_PRIMITIVE` | Easy Mode blob references a primitive this build does not know |
+| 15 | `STATUS_EASY_UNKNOWN_MAC` | Easy Mode blob references a MAC this build does not know |
+| 16 | `STATUS_EASY_BAD_KEY_BITS` | Easy Mode blob's `key_bits` invalid for its primitive |
+| 17 | `STATUS_EASY_MISMATCH` | Easy Mode blob disagrees with the receiver on `primitive` / `key_bits` / `mode` / `mac`; field name on `EasyMismatchError.field` |
+| 18 | `STATUS_EASY_LOCKSEED_AFTER_ENCRYPT` | `set_lock_seed(1)` called after the first encrypt — must precede the first ciphertext |
+| 19 | `STATUS_BLOB_MODE_MISMATCH` | Native Blob importer received a Single blob into a Triple receiver (or vice versa) |
+| 20 | `STATUS_BLOB_MALFORMED` | Native Blob payload fails JSON parse / magic / structural check |
+| 21 | `STATUS_BLOB_VERSION_TOO_NEW` | Native Blob version field higher than this libitb build supports |
+| 22 | `STATUS_BLOB_TOO_MANY_OPTS` | Native Blob export opts mask carries unsupported bits |
+| 99 | `STATUS_INTERNAL` | Generic "internal" sentinel for paths the caller cannot recover from at the binding layer |
+
+## Benchmarks
+
+A custom Go-bench-style harness lives under `easy/benchmarks/`
+and covers the four ops (`encrypt`, `decrypt`, `encrypt_auth`,
+`decrypt_auth`) across the nine PRF-grade primitives plus one
+mixed-primitive variant for both Single and Triple Ouroboros at
+1024-bit ITB key width and 16 MiB payload. See
+[`easy/benchmarks/README.md`](easy/benchmarks/README.md) for
+invocation / environment variables / output format and
+[`easy/benchmarks/BENCH.md`](easy/benchmarks/BENCH.md) for
+recorded throughput results across the canonical pass matrix.
+
+The four-pass canonical sweep (Single + Triple × ±LockSeed) that
+fills `easy/benchmarks/BENCH.md` is driven by the wrapper script
+in the binding root:
+
+```bash
+./bindings/python/run_bench.sh                  # full 4-pass canonical sweep
+./bindings/python/run_bench.sh --lockseed-only  # pass 3 + pass 4 only
+```
+
+The harness sets `LD_LIBRARY_PATH` to `dist/linux-amd64/`,
+manages `ITB_LOCKSEED` per pass, and forwards `ITB_NONCE_BITS` /
+`ITB_BENCH_FILTER` / `ITB_BENCH_MIN_SEC` straight through to the
+underlying `python -m easy.benchmarks.bench_single` /
+`python -m easy.benchmarks.bench_triple` invocations.
