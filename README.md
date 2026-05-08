@@ -24,13 +24,6 @@ The convenience driver `bindings/python/build.sh` builds
 ./bindings/python/build.sh
 ```
 
-For hosts without AVX-512+VL CPUs, opt out of the 4-lane batched
-chain-absorb wrapper:
-
-```bash
-./bindings/python/build.sh --noitbasm
-```
-
 The driver wraps the libitb build from the repo root; the Python
 binding loads `libitb.so` at runtime via cffi with no further
 build step on the binding side. Equivalent manual invocation:
@@ -42,18 +35,6 @@ go build -trimpath -buildmode=c-shared \
 
 (macOS produces `libitb.dylib` under `dist/darwin-<arch>/`,
 Windows produces `libitb.dll` under `dist/windows-<arch>/`.)
-
-### Build tags governing hash-kernel selection
-
-| Build flag | ITB chain-absorb asm | Upstream hash asm | Use case |
-|---|---|---|---|
-| (none) | engaged | engaged | Default — full asm stack |
-| <code>‑tags=noitbasm</code> | off | engaged | Hosts without AVX-512+VL where the 4-lane chain-absorb wrapper is dead weight; the encrypt path falls into `process_cgo`'s nil-`BatchHash` branch and drives 4 single-call invocations through the upstream asm directly |
-
-Passing `-tags=noitbasm` does not disable upstream asm in
-`zeebo/blake3`, `golang.org/x/crypto`, or `jedisct1/go-aes`. The
-same `libitb.so` is consumed by every binding; the flag governs
-only the shared library, not the binding language.
 
 ## Run tests
 
@@ -957,6 +938,8 @@ cipher entry point. Pass at least one byte.
 | 20 | `STATUS_BLOB_MALFORMED` | Native Blob payload fails JSON parse / magic / structural check |
 | 21 | `STATUS_BLOB_VERSION_TOO_NEW` | Native Blob version field higher than this libitb build supports |
 | 22 | `STATUS_BLOB_TOO_MANY_OPTS` | Native Blob export opts mask carries unsupported bits |
+| 23 | `STATUS_STREAM_TRUNCATED` | Streaming AEAD transcript truncated before the terminator chunk; raised as `ItbStreamTruncatedError` |
+| 24 | `STATUS_STREAM_AFTER_FINAL` | Streaming AEAD transcript carries chunk bytes after the terminator; raised as `ItbStreamAfterFinalError` |
 | 99 | `STATUS_INTERNAL` | Generic "internal" sentinel for paths the caller cannot recover from at the binding layer |
 
 ## Benchmarks
