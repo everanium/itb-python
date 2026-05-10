@@ -304,12 +304,31 @@ def _make_stream_aead_io_decrypt_case(
     mode_name = "single" if mode == 1 else "triple"
     name = f"BenchmarkStreaming{mode_name.capitalize()}/{label}/{cipher_name}/decrypt"
     payload = _common.random_bytes(STREAM_PAYLOAD_BYTES)
-    outer_key, pristine_wire = _stream_encrypt_aead_io(mode, cipher_name, payload)
+
+    # Streaming AEAD MAC binding ties the wire to the encryptor's
+    # seeds + MAC key. Build one long-lived encryptor up front, use
+    # it to produce the pristine wire, then reuse the same encryptor
+    # in the timed decrypt loop. Mirrors runAEADEasyIODecrypt in
+    # wrapper/bench_test.go: the Go reference also pins one encryptor
+    # across the setup + per-iteration body.
+    enc = _new_easy_encryptor(mode, with_mac=True)
+    outer_key = wrapper.generate_key(cipher_name)
+    wire_buf = io.BytesIO()
+    with wrapper.WrapStreamWriter(cipher_name, outer_key) as ww:
+        wire_buf.write(ww.nonce)
+        inner = io.BytesIO()
+        enc.encrypt_stream_auth(io.BytesIO(payload), inner, chunk_size=STREAM_CHUNK_SIZE)
+        wire_buf.write(ww.update(inner.getvalue()))
+    pristine_wire = wire_buf.getvalue()
+    nlen = wrapper.nonce_size(cipher_name)
 
     def fn(iters: int) -> None:
         for _ in range(iters):
             wire = bytes(pristine_wire)
-            _stream_decrypt_aead_io(mode, cipher_name, outer_key, wire)
+            with wrapper.UnwrapStreamReader(cipher_name, outer_key, wire[:nlen]) as ur:
+                inner_wire = ur.update(wire[nlen:])
+            out = io.BytesIO()
+            enc.decrypt_stream_auth(io.BytesIO(inner_wire), out)
 
     return (name, fn, STREAM_PAYLOAD_BYTES)
 
@@ -334,12 +353,42 @@ def _make_stream_userloop_decrypt_case(
     mode_name = "single" if mode == 1 else "triple"
     name = f"BenchmarkStreaming{mode_name.capitalize()}/{label}/{cipher_name}/decrypt"
     payload = _common.random_bytes(STREAM_PAYLOAD_BYTES)
-    outer_key, pristine_wire = _stream_encrypt_userloop(mode, cipher_name, payload)
+
+    # No MAC user-loop wire still depends on encryptor seeds for
+    # correct plaintext recovery. Pin one encryptor across the
+    # pristine-wire setup and the timed decrypt loop so the per-chunk
+    # decrypt() observes the same seed material that produced the
+    # ciphertext. Without a MAC the mismatch surfaces as silent
+    # garbage rather than a visible FAIL, but the throughput then
+    # measures wrong-plaintext work — pinning the encryptor matches
+    # both correctness and the wrapper/bench_test.go pattern.
+    enc = _new_easy_encryptor(mode, with_mac=False)
+    outer_key = wrapper.generate_key(cipher_name)
+    wire_buf = io.BytesIO()
+    with wrapper.WrapStreamWriter(cipher_name, outer_key) as ww:
+        wire_buf.write(ww.nonce)
+        for off in range(0, len(payload), STREAM_CHUNK_SIZE):
+            chunk = payload[off : off + STREAM_CHUNK_SIZE]
+            ct = enc.encrypt(chunk)
+            wire_buf.write(ww.update(struct.pack("<I", len(ct))))
+            wire_buf.write(ww.update(ct))
+    pristine_wire = wire_buf.getvalue()
+    nlen = wrapper.nonce_size(cipher_name)
 
     def fn(iters: int) -> None:
         for _ in range(iters):
             wire = bytes(pristine_wire)
-            _stream_decrypt_userloop(mode, cipher_name, outer_key, wire)
+            with wrapper.UnwrapStreamReader(cipher_name, outer_key, wire[:nlen]) as ur:
+                inner = ur.update(wire[nlen:])
+            out = io.BytesIO()
+            view = memoryview(inner)
+            off = 0
+            while off < len(view):
+                (clen,) = struct.unpack("<I", bytes(view[off : off + 4]))
+                off += 4
+                ct = bytes(view[off : off + clen])
+                off += clen
+                out.write(enc.decrypt(ct))
 
     return (name, fn, STREAM_PAYLOAD_BYTES)
 
