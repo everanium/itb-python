@@ -1004,7 +1004,7 @@ class Encryptor:
         safety net per .NEXTBIND.md §7.1.
 
         Reuses the per-encryptor ``_out_buf`` / ``_out_cap`` cache
-        (Bonus 1 in §7.1) — same scope as the single-shot
+        (Bonus 1 in §7.1) — same scope as the Single Message
         :meth:`_cipher_call` path — so the streaming hot loop
         amortises the cffi allocation across every chunk."""
         self._check_open()
@@ -1051,7 +1051,7 @@ class Encryptor:
         ``(plaintext, final_flag)``.
 
         Reuses the per-encryptor ``_out_buf`` / ``_out_cap`` cache
-        (Bonus 1 in §7.1) — same scope as the single-shot
+        (Bonus 1 in §7.1) — same scope as the Single Message
         :meth:`_cipher_call` path."""
         self._check_open()
         sid_buf = _ffi.new(f"unsigned char[{_STREAM_ID_LEN}]", stream_id)

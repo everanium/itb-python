@@ -295,7 +295,7 @@ def _make_easy_stream_auth_decrypt_case(name: str) -> _common.BenchCase:
 
 
 def _make_easy_user_loop_encrypt_case(name: str) -> _common.BenchCase:
-    """Easy Mode user-driven loop encrypt — per-chunk
+    """Easy Mode User-Driven Loop encrypt — per-chunk
     :meth:`Encryptor.encrypt` calls wrapped in a caller-side loop with
     a 4-byte big-endian ciphertext-length prefix per chunk."""
     enc = _build_easy_stream_encryptor()
@@ -317,7 +317,7 @@ def _make_easy_user_loop_encrypt_case(name: str) -> _common.BenchCase:
 
 
 def _make_easy_user_loop_decrypt_case(name: str) -> _common.BenchCase:
-    """Easy Mode user-driven loop decrypt — pre-encrypts the chunked
+    """Easy Mode User-Driven Loop decrypt — pre-encrypts the chunked
     transcript outside the timer, then walks 4-byte BE length
     prefixes feeding each ciphertext slice to
     :meth:`Encryptor.decrypt`."""
@@ -394,7 +394,7 @@ def _make_lowlevel_stream_auth_decrypt_case(name: str) -> _common.BenchCase:
 
 
 def _make_lowlevel_user_loop_encrypt_case(name: str) -> _common.BenchCase:
-    """Low-Level Mode user-driven loop encrypt — module-level
+    """Low-Level Mode User-Driven Loop encrypt — module-level
     :func:`itb.encrypt_stream` running the plain (no-MAC) chunked
     cipher pipeline. The free function manages the chunk loop
     internally; the bench body invokes it once per iteration with a
@@ -413,7 +413,7 @@ def _make_lowlevel_user_loop_encrypt_case(name: str) -> _common.BenchCase:
 
 
 def _make_lowlevel_user_loop_decrypt_case(name: str) -> _common.BenchCase:
-    """Low-Level Mode user-driven loop decrypt — pre-encrypts the
+    """Low-Level Mode User-Driven Loop decrypt — pre-encrypts the
     plain transcript outside the timer; the iter body invokes
     :func:`itb.decrypt_stream` against the captured wire bytes."""
     noise, data, start = _build_lowlevel_stream_seeds()

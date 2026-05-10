@@ -90,6 +90,7 @@ encryptor at constructor time and is not exposed to the caller.
 import hashlib
 import os
 import itb
+from itb import wrapper
 
 SRC_PATH = "/tmp/64mb.src"
 ENC_PATH = "/tmp/64mb.enc"
@@ -108,13 +109,36 @@ if not os.path.exists(SRC_PATH) or os.path.getsize(SRC_PATH) != 64 * 1024 * 1024
     with open("/dev/urandom", "rb") as r, open(SRC_PATH, "wb") as w:
         w.write(r.read(64 * 1024 * 1024))
 
+# Outer cipher key - preferred surface for HKDF / ML-KEM / key-rotation policy in user-side application. ITB inner PRF + seeds keep CSPRNG-fresh randomness per call.
+outer_key = wrapper.generate_key(wrapper.CIPHER_AES128_CTR)
+
 enc = itb.Encryptor(primitive="areion512", key_bits=1024,
                     mac="hmac-blake3", mode=1)
 try:
-    with open(SRC_PATH, "rb") as fin, open(ENC_PATH, "wb") as fout:
+    # Sender - encrypt to an intermediate file, then wrap the entire
+    # bytestream end-to-end through one keystream session.
+    with open(SRC_PATH, "rb") as fin, open(ENC_PATH + ".inner", "wb") as fout:
         enc.encrypt_stream_auth(fin, fout, chunk_size=CHUNK_SIZE)
-    with open(ENC_PATH, "rb") as fin, open(DST_PATH, "wb") as fout:
+
+    # Format-deniability ITB masking via outer-cipher streaming wrapper (AES-128-CTR) - same ~0% overhead in stream mode (Recommended in every case).
+    with wrapper.WrapStreamWriter(wrapper.CIPHER_AES128_CTR, outer_key) as ww, \
+            open(ENC_PATH + ".inner", "rb") as fin, open(ENC_PATH, "wb") as fout:
+        fout.write(ww.nonce)
+        for chunk in iter(lambda: fin.read(CHUNK_SIZE), b""):
+            fout.write(ww.update(chunk))
+    os.remove(ENC_PATH + ".inner")
+
+    # Receiver - strip the leading nonce, unwrap the body, decrypt.
+    nonce_len = wrapper.nonce_size(wrapper.CIPHER_AES128_CTR)
+    with open(ENC_PATH, "rb") as fin:
+        nonce_part = fin.read(nonce_len)
+        with wrapper.UnwrapStreamReader(wrapper.CIPHER_AES128_CTR, outer_key, nonce_part) as ur, \
+                open(ENC_PATH + ".inner", "wb") as fout:
+            for chunk in iter(lambda: fin.read(CHUNK_SIZE), b""):
+                fout.write(ur.update(chunk))
+    with open(ENC_PATH + ".inner", "rb") as fin, open(DST_PATH, "wb") as fout:
         enc.decrypt_stream_auth(fin, fout, read_size=CHUNK_SIZE)
+    os.remove(ENC_PATH + ".inner")
 finally:
     enc.close()
 
@@ -166,6 +190,7 @@ and must be freed when no longer needed.
 import hashlib
 import os
 import itb
+from itb import wrapper
 
 SRC_PATH = "/tmp/64mb.src"
 ENC_PATH = "/tmp/64mb.enc"
@@ -179,18 +204,41 @@ def sha256_of(path: str) -> str:
             h.update(chunk)
     return h.hexdigest()
 
+# Outer cipher key - preferred surface for HKDF / ML-KEM / key-rotation policy in user-side application. ITB inner PRF + seeds keep CSPRNG-fresh randomness per call.
+outer_key = wrapper.generate_key(wrapper.CIPHER_AES128_CTR)
+
 noise = itb.Seed("areion512", 1024)
 data  = itb.Seed("areion512", 1024)
 start = itb.Seed("areion512", 1024)
 mac_key = os.urandom(32)
 mac = itb.MAC("hmac-blake3", mac_key)
 try:
-    with open(SRC_PATH, "rb") as fin, open(ENC_PATH, "wb") as fout:
+    # Sender - encrypt to an intermediate file, then wrap end-to-end
+    # through one keystream session.
+    with open(SRC_PATH, "rb") as fin, open(ENC_PATH + ".inner", "wb") as fout:
         itb.encrypt_stream_auth(noise, data, start, mac, fin, fout,
                                 chunk_size=CHUNK_SIZE)
-    with open(ENC_PATH, "rb") as fin, open(DST_PATH, "wb") as fout:
+
+    # Format-deniability ITB masking via outer-cipher streaming wrapper (AES-128-CTR) - same ~0% overhead in stream mode (Recommended in every case).
+    with wrapper.WrapStreamWriter(wrapper.CIPHER_AES128_CTR, outer_key) as ww, \
+            open(ENC_PATH + ".inner", "rb") as fin, open(ENC_PATH, "wb") as fout:
+        fout.write(ww.nonce)
+        for chunk in iter(lambda: fin.read(CHUNK_SIZE), b""):
+            fout.write(ww.update(chunk))
+    os.remove(ENC_PATH + ".inner")
+
+    # Receiver
+    nonce_len = wrapper.nonce_size(wrapper.CIPHER_AES128_CTR)
+    with open(ENC_PATH, "rb") as fin:
+        nonce_part = fin.read(nonce_len)
+        with wrapper.UnwrapStreamReader(wrapper.CIPHER_AES128_CTR, outer_key, nonce_part) as ur, \
+                open(ENC_PATH + ".inner", "wb") as fout:
+            for chunk in iter(lambda: fin.read(CHUNK_SIZE), b""):
+                fout.write(ur.update(chunk))
+    with open(ENC_PATH + ".inner", "rb") as fin, open(DST_PATH, "wb") as fout:
         itb.decrypt_stream_auth(noise, data, start, mac, fin, fout,
                                 read_size=CHUNK_SIZE)
+    os.remove(ENC_PATH + ".inner")
 finally:
     mac.free()
     noise.free(); data.free(); start.free()
@@ -241,6 +289,10 @@ cross-contamination.
 # Sender
 
 import itb
+from itb import wrapper
+
+# Outer cipher key - preferred surface for HKDF / ML-KEM / key-rotation policy in user-side application. ITB inner PRF + seeds keep CSPRNG-fresh randomness per call.
+outer_key = wrapper.generate_key(wrapper.CIPHER_AES128_CTR)
 
 # Per-instance configuration — mutates only this encryptor's Config.
 # Two encryptors built side-by-side carry independent settings;
@@ -280,6 +332,12 @@ with itb.Encryptor("areion512", 2048, "hmac-blake3") as enc:
     encrypted = enc.encrypt(plaintext)
     print(f"encrypted: {len(encrypted)} bytes")
 
+    # Format-deniability ITB masking through outer cipher AES-128-CTR with ~0% overhead over ITB Encrypt / Decrypt (Recommended in every case).
+    mutable_blob = bytearray(encrypted)
+    nonce = wrapper.wrap_in_place(wrapper.CIPHER_AES128_CTR, outer_key, mutable_blob)
+    wire = bytes(nonce) + bytes(mutable_blob)
+    print(f"wire: {len(wire)} bytes")
+
     # Streaming alternative — the application drives chunk boundaries
     # by slicing plaintext into chunk_size pieces and calling
     # enc.encrypt() per chunk. enc.header_size + enc.parse_chunk_len
@@ -287,19 +345,24 @@ with itb.Encryptor("areion512", 2048, "hmac-blake3") as enc:
     # nonce_bits, NOT the process-wide itb.header_size).
     #from io import BytesIO
     #cbuf = BytesIO()
-    #for i in range(0, len(plaintext), chunk_size):
-    #    cbuf.write(enc.encrypt(plaintext[i:i+chunk_size]))
-    #encrypted = cbuf.getvalue()
+    #with wrapper.WrapStreamWriter(wrapper.CIPHER_AES128_CTR, outer_key) as ww:
+    #    cbuf.write(ww.nonce)
+    #    for i in range(0, len(plaintext), chunk_size):
+    #        ct = enc.encrypt(plaintext[i:i+chunk_size])
+    #        cbuf.write(ww.update(struct.pack("<I", len(ct))))
+    #        cbuf.write(ww.update(ct))
+    #wire = cbuf.getvalue()
 
-    # Send encrypted payload + state blob
+    # Send wire + state blob
 
 
 # Receiver
 
 import itb
+from itb import wrapper
 
-# Receive encrypted payload + state blob
-# encrypted = ...
+# Receive wire + state blob
+# wire = ...
 # blob = ...
 
 # Optional: peek at the blob's metadata before constructing a
@@ -331,26 +394,32 @@ with itb.Encryptor(prim, key_bits, mac, mode=mode) as dec:
 
     #read_size = 64 * 1024  # app-driven feed granularity
 
+    # Strip the leading nonce, unwrap the body, then decrypt.
+    wire_buf = bytearray(wire)
+    encrypted = bytes(wrapper.unwrap_in_place(wrapper.CIPHER_AES128_CTR, outer_key, wire_buf))
+
     # One-shot decrypt from RGBWYOPA container.
     decrypted = dec.decrypt(encrypted)
     print(f"decrypted: {decrypted.decode()}")
 
-    # Streaming alternative — walk concatenated chunks by reading
+    # Streaming alternative — strip the leading nonce, unwrap through
+    # one keystream session, then walk concatenated chunks by reading
     # dec.header_size bytes, calling dec.parse_chunk_len(buf), reading
     # the remaining body, and feeding the full chunk to dec.decrypt().
+    #import struct
     #from io import BytesIO
-    #cin = BytesIO(encrypted)
+    #nonce_len = wrapper.nonce_size(wrapper.CIPHER_AES128_CTR)
+    #nonce_part = wire[:nonce_len]
+    #with wrapper.UnwrapStreamReader(wrapper.CIPHER_AES128_CTR, outer_key, nonce_part) as ur:
+    #    decrypted_wire = ur.update(wire[nonce_len:])
     #pbuf = BytesIO()
-    #accumulator = bytearray()
-    #while True:
-    #    buf = cin.read(read_size)
-    #    if not buf: break
-    #    accumulator.extend(buf)
-    #    while len(accumulator) >= dec.header_size:
-    #        chunk_len = dec.parse_chunk_len(bytes(accumulator[:dec.header_size]))
-    #        if len(accumulator) < chunk_len: break
-    #        pbuf.write(dec.decrypt(bytes(accumulator[:chunk_len])))
-    #        del accumulator[:chunk_len]
+    #view = memoryview(decrypted_wire)
+    #off = 0
+    #while off < len(view):
+    #    (clen,) = struct.unpack("<I", bytes(view[off:off+4]))
+    #    off += 4
+    #    pbuf.write(dec.decrypt(bytes(view[off:off+clen])))
+    #    off += clen
     #decrypted = pbuf.getvalue()
 ```
 
@@ -370,6 +439,10 @@ is one method call per side.
 # Sender
 
 import itb
+from itb import wrapper
+
+# Outer cipher key - preferred surface for HKDF / ML-KEM / key-rotation policy in user-side application. ITB inner PRF + seeds keep CSPRNG-fresh randomness per call.
+outer_key = wrapper.generate_key(wrapper.CIPHER_AES128_CTR)
 
 with itb.Encryptor("areion512", 2048, "hmac-blake3") as enc:
     enc.set_nonce_bits(512)   # per-instance — does NOT touch process-wide state
@@ -398,25 +471,37 @@ with itb.Encryptor("areion512", 2048, "hmac-blake3") as enc:
     encrypted = enc.encrypt_auth(plaintext)
     print(f"encrypted: {len(encrypted)} bytes")
 
+    # Format-deniability ITB masking through outer cipher AES-128-CTR with ~0% overhead over ITB Encrypt / Decrypt (Recommended in every case).
+    mutable_blob = bytearray(encrypted)
+    nonce = wrapper.wrap_in_place(wrapper.CIPHER_AES128_CTR, outer_key, mutable_blob)
+    wire = bytes(nonce) + bytes(mutable_blob)
+    print(f"wire: {len(wire)} bytes")
+
     # Streaming alternative — slice plaintext into chunk_size pieces
     # and call enc.encrypt_auth() per chunk; each chunk carries its
     # own MAC tag. enc.header_size + enc.parse_chunk_len are
     # per-instance accessors.
+    #import struct
     #from io import BytesIO
     #cbuf = BytesIO()
-    #for i in range(0, len(plaintext), chunk_size):
-    #    cbuf.write(enc.encrypt_auth(plaintext[i:i+chunk_size]))
-    #encrypted = cbuf.getvalue()
+    #with wrapper.WrapStreamWriter(wrapper.CIPHER_AES128_CTR, outer_key) as ww:
+    #    cbuf.write(ww.nonce)
+    #    for i in range(0, len(plaintext), chunk_size):
+    #        ct = enc.encrypt_auth(plaintext[i:i+chunk_size])
+    #        cbuf.write(ww.update(struct.pack("<I", len(ct))))
+    #        cbuf.write(ww.update(ct))
+    #wire = cbuf.getvalue()
 
-    # Send encrypted payload + state blob
+    # Send wire + state blob
 
 
 # Receiver
 
 import itb
+from itb import wrapper
 
-# Receive encrypted payload + state blob
-# encrypted = ...
+# Receive wire + state blob
+# wire = ...
 # blob = ...
 
 itb.set_max_workers(8)        # limit to 8 CPU cores (default: 0 = all CPUs)
@@ -441,6 +526,10 @@ with itb.Encryptor(prim, key_bits, mac, mode=mode) as dec:
 
     dec.import_state(blob)
 
+    # Strip the leading nonce, unwrap the body, then decrypt.
+    wire_buf = bytearray(wire)
+    encrypted = bytes(wrapper.unwrap_in_place(wrapper.CIPHER_AES128_CTR, outer_key, wire_buf))
+
     # Authenticated decrypt — any single-bit tamper triggers MAC
     # failure (no oracle leak about which byte was tampered).
     # Mismatch surfaces as ITBError(STATUS_MAC_FAILURE), not a
@@ -454,22 +543,24 @@ with itb.Encryptor(prim, key_bits, mac, mode=mode) as dec:
         else:
             raise
 
-    # Streaming alternative — walk the chunk stream, decrypt_auth
+    # Streaming alternative — strip the leading nonce, unwrap through
+    # one keystream session, then walk the chunk stream and decrypt_auth
     # each chunk; any tamper inside any chunk surfaces as
     # ITBError(STATUS_MAC_FAILURE) on that chunk.
+    #import struct
     #from io import BytesIO
-    #cin = BytesIO(encrypted)
+    #nonce_len = wrapper.nonce_size(wrapper.CIPHER_AES128_CTR)
+    #nonce_part = wire[:nonce_len]
+    #with wrapper.UnwrapStreamReader(wrapper.CIPHER_AES128_CTR, outer_key, nonce_part) as ur:
+    #    decrypted_wire = ur.update(wire[nonce_len:])
     #pbuf = BytesIO()
-    #accumulator = bytearray()
-    #while True:
-    #    buf = cin.read(64 * 1024)
-    #    if not buf: break
-    #    accumulator.extend(buf)
-    #    while len(accumulator) >= dec.header_size:
-    #        chunk_len = dec.parse_chunk_len(bytes(accumulator[:dec.header_size]))
-    #        if len(accumulator) < chunk_len: break
-    #        pbuf.write(dec.decrypt_auth(bytes(accumulator[:chunk_len])))
-    #        del accumulator[:chunk_len]
+    #view = memoryview(decrypted_wire)
+    #off = 0
+    #while off < len(view):
+    #    (clen,) = struct.unpack("<I", bytes(view[off:off+4]))
+    #    off += 4
+    #    pbuf.write(dec.decrypt_auth(bytes(view[off:off+clen])))
+    #    off += clen
     #decrypted = pbuf.getvalue()
 ```
 
@@ -490,6 +581,10 @@ a matching encryptor with the same arguments and calls
 # Sender
 
 import itb
+from itb import wrapper
+
+# Outer cipher key - preferred surface for HKDF / ML-KEM / key-rotation policy in user-side application. ITB inner PRF + seeds keep CSPRNG-fresh randomness per call.
+outer_key = wrapper.generate_key(wrapper.CIPHER_AES128_CTR)
 
 # Per-slot primitive selection (Single Ouroboros, 3 + 1 slots).
 # Every name must share the same native hash width — mixing widths
@@ -536,7 +631,13 @@ try:
     encrypted = enc.encrypt_auth(plaintext)
     print(f"encrypted: {len(encrypted)} bytes")
 
-    # Send encrypted payload + state blob
+    # Format-deniability ITB masking through outer cipher AES-128-CTR with ~0% overhead over ITB Encrypt / Decrypt (Recommended in every case).
+    mutable_blob = bytearray(encrypted)
+    nonce = wrapper.wrap_in_place(wrapper.CIPHER_AES128_CTR, outer_key, mutable_blob)
+    wire = bytes(nonce) + bytes(mutable_blob)
+    print(f"wire: {len(wire)} bytes")
+
+    # Send wire + state blob
 finally:
     enc.close()
 
@@ -544,9 +645,10 @@ finally:
 # Receiver
 
 import itb
+from itb import wrapper
 
-# Receive encrypted payload + state blob
-# encrypted = ...
+# Receive wire + state blob
+# wire = ...
 # blob = ...
 
 # Receiver constructs a matching mixed encryptor — every per-slot
@@ -570,6 +672,10 @@ try:
     # a primitive mismatch.
     dec.import_state(blob)
 
+    # Strip the leading nonce, unwrap the body, then decrypt.
+    wire_buf = bytearray(wire)
+    encrypted = bytes(wrapper.unwrap_in_place(wrapper.CIPHER_AES128_CTR, outer_key, wire_buf))
+
     decrypted = dec.decrypt_auth(encrypted)
     print(f"decrypted: {decrypted.decode()}")
 finally:
@@ -582,6 +688,7 @@ finally:
 # Sender
 
 import itb
+from itb import wrapper
 
 # Optional: global configuration (all process-wide, atomic)
 itb.set_max_workers(8)        # limit to 8 CPU cores (default: 0 = all CPUs)
@@ -616,6 +723,9 @@ ss = itb.Seed("areion512", 2048)  # random start CSPRNG seeds + hash key generat
 ls = itb.Seed("areion512", 2048)  # random lock CSPRNG seeds + hash key generated
 ns.attach_lock_seed(ls)
 
+# Outer cipher key - preferred surface for HKDF / ML-KEM / key-rotation policy in user-side application. ITB inner PRF + seeds keep CSPRNG-fresh randomness per call.
+outer_key = wrapper.generate_key(wrapper.CIPHER_AES128_CTR)
+
 plaintext = b"any text or binary data - including 0x00 bytes"
 #chunk_size = 4 * 1024 * 1024  # 4 MB - bulk local crypto, not small-frame network streaming
 #read_size  = 64 * 1024        # app-driven feed granularity (independent of chunk_size)
@@ -625,16 +735,27 @@ try:
     encrypted = itb.encrypt(ns, ds, ss, plaintext)
     print(f"encrypted: {len(encrypted)} bytes")
 
+    # Format-deniability ITB masking through outer cipher AES-128-CTR with ~0% overhead over ITB Encrypt / Decrypt (Recommended in every case).
+    mutable_blob = bytearray(encrypted)
+    nonce = wrapper.wrap_in_place(wrapper.CIPHER_AES128_CTR, outer_key, mutable_blob)
+    wire = bytes(nonce) + bytes(mutable_blob)
+    print(f"wire: {len(wire)} bytes")
+
     # Streaming alternative — the application drives chunk
     # boundaries through StreamEncryptor.write(); the encryptor
     # buffers up to chunk_size bytes before emitting one ITB
     # chunk to fout, with the tail flushed on close().
+    #import struct
     #from io import BytesIO
     #fout = BytesIO()
-    #with itb.StreamEncryptor(ns, ds, ss, fout, chunk_size=chunk_size) as enc:
+    #inner = BytesIO()
+    #with itb.StreamEncryptor(ns, ds, ss, inner, chunk_size=chunk_size) as senc:
     #    for i in range(0, len(plaintext), read_size):
-    #        enc.write(plaintext[i:i+read_size])
-    #ciphertext = fout.getvalue()
+    #        senc.write(plaintext[i:i+read_size])
+    #with wrapper.WrapStreamWriter(wrapper.CIPHER_AES128_CTR, outer_key) as ww:
+    #    fout.write(ww.nonce)
+    #    fout.write(ww.update(inner.getvalue()))
+    #wire = fout.getvalue()
 
     # For cross-process persistence: itb.Blob512 packs every seed's
     # hash key + components and the captured process-wide globals
@@ -650,7 +771,7 @@ try:
         blob_bytes = blob.export(lockseed=True)
     print(f"persistence blob: {len(blob_bytes)} bytes")
 
-    # Send encrypted payload + blob_bytes
+    # Send wire + blob_bytes
 finally:
     ns.free(); ds.free(); ss.free(); ls.free()
 
@@ -658,11 +779,12 @@ finally:
 # Receiver
 
 import itb
+from itb import wrapper
 
 itb.set_max_workers(8)        # deployment knob — not serialised by Blob512
 
-# Receive encrypted payload + blob_bytes
-# encrypted = ...; blob_bytes = ...
+# Receive wire + blob_bytes
+# wire = ...; blob_bytes = ...
 
 # Blob512.import_blob applies the captured globals (nonce_bits /
 # barrier_fill / bit_soup / lock_soup) via the process-wide setters
@@ -683,19 +805,26 @@ ns.attach_lock_seed(ls)
 #read_size = 64 * 1024  # app-driven feed granularity
 
 try:
+    # Strip the leading nonce, unwrap the body, then decrypt.
+    wire_buf = bytearray(wire)
+    encrypted = bytes(wrapper.unwrap_in_place(wrapper.CIPHER_AES128_CTR, outer_key, wire_buf))
+
     # Decrypt from RGBWYOPA container
     decrypted = itb.decrypt(ns, ds, ss, encrypted)
     print(f"decrypted: {decrypted.decode()}")
 
-    # Streaming alternative — the application drives chunk
-    # boundaries through StreamDecryptor.feed(); the decryptor
-    # parses ITB chunk headers from the fed stream and emits
-    # plaintext to fout as each chunk completes.
+    # Streaming alternative — strip the leading nonce, unwrap through
+    # one keystream session, then drive StreamDecryptor.feed() with
+    # the recovered inner bytestream.
     #from io import BytesIO
+    #nonce_len = wrapper.nonce_size(wrapper.CIPHER_AES128_CTR)
+    #nonce_part = wire[:nonce_len]
+    #with wrapper.UnwrapStreamReader(wrapper.CIPHER_AES128_CTR, outer_key, nonce_part) as ur:
+    #    inner_wire = ur.update(wire[nonce_len:])
     #fout = BytesIO()
-    #with itb.StreamDecryptor(ns, ds, ss, fout) as dec:
-    #    for i in range(0, len(encrypted), read_size):
-    #        dec.feed(encrypted[i:i+read_size])
+    #with itb.StreamDecryptor(ns, ds, ss, fout) as sdec:
+    #    for i in range(0, len(inner_wire), read_size):
+    #        sdec.feed(inner_wire[i:i+read_size])
     #decrypted = fout.getvalue()
 finally:
     ns.free(); ds.free(); ss.free(); ls.free()
@@ -708,6 +837,7 @@ finally:
 
 import itb
 import secrets
+from itb import wrapper
 
 # Optional: global configuration (all process-wide, atomic)
 itb.set_max_workers(8)        # limit to 8 CPU cores (default: 0 = all CPUs)
@@ -736,6 +866,9 @@ ns.attach_lock_seed(ls)
 mac_key = secrets.token_bytes(32)
 mac = itb.MAC("hmac-blake3", mac_key)
 
+# Outer cipher key - preferred surface for HKDF / ML-KEM / key-rotation policy in user-side application. ITB inner PRF + seeds keep CSPRNG-fresh randomness per call.
+outer_key = wrapper.generate_key(wrapper.CIPHER_AES128_CTR)
+
 plaintext = b"any text or binary data - including 0x00 bytes"
 
 try:
@@ -744,6 +877,12 @@ try:
     # container, preserving oracle-free deniability.
     encrypted = itb.encrypt_auth(ns, ds, ss, mac, plaintext)
     print(f"encrypted: {len(encrypted)} bytes")
+
+    # Format-deniability ITB masking through outer cipher AES-128-CTR with ~0% overhead over ITB Encrypt / Decrypt (Recommended in every case).
+    mutable_blob = bytearray(encrypted)
+    nonce = wrapper.wrap_in_place(wrapper.CIPHER_AES128_CTR, outer_key, mutable_blob)
+    wire = bytes(nonce) + bytes(mutable_blob)
+    print(f"wire: {len(wire)} bytes")
 
     # Cross-process persistence: itb.Blob512 packs every seed's
     # hash key + components, the optional dedicated lockSeed, and
@@ -759,7 +898,7 @@ try:
         blob_bytes = blob.export(lockseed=True, mac=True)
     print(f"persistence blob: {len(blob_bytes)} bytes")
 
-    # Send encrypted payload + blob_bytes
+    # Send wire + blob_bytes
 finally:
     mac.free()
     ns.free(); ds.free(); ss.free(); ls.free()
@@ -768,11 +907,12 @@ finally:
 # Receiver
 
 import itb
+from itb import wrapper
 
 itb.set_max_workers(8)        # deployment knob — not serialised by Blob512
 
-# Receive encrypted payload + blob_bytes
-# encrypted = ...; blob_bytes = ...
+# Receive wire + blob_bytes
+# wire = ...; blob_bytes = ...
 
 # Blob512.import_blob restores per-slot hash keys + components AND
 # applies the captured globals (nonce_bits / barrier_fill / bit_soup
@@ -790,6 +930,10 @@ mac = itb.MAC(restored.get_mac_name(), restored.get_mac_key())
 restored.free()
 
 try:
+    # Strip the leading nonce, unwrap the body, then decrypt.
+    wire_buf = bytearray(wire)
+    encrypted = bytes(wrapper.unwrap_in_place(wrapper.CIPHER_AES128_CTR, outer_key, wire_buf))
+
     # Authenticated decrypt — any single-bit tamper triggers MAC
     # failure (no oracle leak about which byte was tampered).
     decrypted = itb.decrypt_auth(ns, ds, ss, mac, encrypted)

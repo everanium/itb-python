@@ -296,7 +296,7 @@ def _make_easy_stream_auth_decrypt_case(name: str) -> _common.BenchCase:
 
 
 def _make_easy_user_loop_encrypt_case(name: str) -> _common.BenchCase:
-    """Easy Mode Triple-Ouroboros user-driven loop encrypt —
+    """Easy Mode Triple-Ouroboros User-Driven Loop encrypt —
     per-chunk :meth:`Encryptor.encrypt` calls wrapped in a
     caller-side loop with a 4-byte big-endian ciphertext-length
     prefix per chunk."""
@@ -319,7 +319,7 @@ def _make_easy_user_loop_encrypt_case(name: str) -> _common.BenchCase:
 
 
 def _make_easy_user_loop_decrypt_case(name: str) -> _common.BenchCase:
-    """Easy Mode Triple-Ouroboros user-driven loop decrypt —
+    """Easy Mode Triple-Ouroboros User-Driven Loop decrypt —
     pre-encrypts the chunked transcript outside the timer, then walks
     4-byte BE length prefixes feeding each ciphertext slice to
     :meth:`Encryptor.decrypt`."""
@@ -403,7 +403,7 @@ def _make_lowlevel_stream_auth_decrypt_case(name: str) -> _common.BenchCase:
 
 
 def _make_lowlevel_user_loop_encrypt_case(name: str) -> _common.BenchCase:
-    """Low-Level Mode Triple-Ouroboros user-driven loop encrypt —
+    """Low-Level Mode Triple-Ouroboros User-Driven Loop encrypt —
     module-level :func:`itb.encrypt_stream_triple` running the plain
     (no-MAC) chunked cipher pipeline."""
     n_seed, d1, d2, d3, s1, s2, s3 = _build_lowlevel_stream_seeds()
@@ -422,7 +422,7 @@ def _make_lowlevel_user_loop_encrypt_case(name: str) -> _common.BenchCase:
 
 
 def _make_lowlevel_user_loop_decrypt_case(name: str) -> _common.BenchCase:
-    """Low-Level Mode Triple-Ouroboros user-driven loop decrypt —
+    """Low-Level Mode Triple-Ouroboros User-Driven Loop decrypt —
     pre-encrypts the plain transcript outside the timer; the iter
     body invokes :func:`itb.decrypt_stream_triple` against the
     captured wire bytes."""

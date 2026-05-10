@@ -519,6 +519,58 @@ extern int ITB_Easy_DecryptStreamAuth(
     unsigned long long cumulativePixelOffset,
     void* out, size_t outCap, size_t* outLen,
     int* finalFlagOut);
+
+/* Format-deniability wrapper (outer CTR cipher). Mirrors the
+ * 12 entry points exported by cmd/cshared/main.go for the
+ * github.com/everanium/itb/wrapper Go package. The cipher_name
+ * argument selects one of three outer keystream ciphers
+ * ("aes" / "chacha" / "siphash"). */
+
+extern int ITB_WrapperKeySize(char* cipherName, size_t* outSize);
+extern int ITB_WrapperNonceSize(char* cipherName, size_t* outSize);
+
+extern int ITB_Wrap(
+    char* cipherName,
+    void* key, size_t keyLen,
+    void* blob, size_t blobLen,
+    void* out, size_t outCap, size_t* outLen);
+extern int ITB_Unwrap(
+    char* cipherName,
+    void* key, size_t keyLen,
+    void* wire, size_t wireLen,
+    void* out, size_t outCap, size_t* outLen);
+
+extern int ITB_WrapInPlace(
+    char* cipherName,
+    void* key, size_t keyLen,
+    void* blob, size_t blobLen,
+    void* outNonce, size_t nonceCap);
+extern int ITB_UnwrapInPlace(
+    char* cipherName,
+    void* key, size_t keyLen,
+    void* wire, size_t wireLen);
+
+extern int ITB_WrapStreamWriter_Init(
+    char* cipherName,
+    void* key, size_t keyLen,
+    void* outNonce, size_t nonceCap,
+    uintptr_t* outHandle);
+extern int ITB_WrapStreamWriter_Update(
+    uintptr_t handle,
+    void* src, size_t srcLen,
+    void* dst, size_t dstCap);
+extern int ITB_WrapStreamWriter_Free(uintptr_t handle);
+
+extern int ITB_UnwrapStreamReader_Init(
+    char* cipherName,
+    void* key, size_t keyLen,
+    void* wireNonce, size_t nonceLen,
+    uintptr_t* outHandle);
+extern int ITB_UnwrapStreamReader_Update(
+    uintptr_t handle,
+    void* src, size_t srcLen,
+    void* dst, size_t dstCap);
+extern int ITB_UnwrapStreamReader_Free(uintptr_t handle);
 """
 
 
