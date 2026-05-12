@@ -36,7 +36,28 @@ go build -trimpath -buildmode=c-shared \
 (macOS produces `libitb.dylib` under `dist/darwin-<arch>/`,
 Windows produces `libitb.dll` under `dist/windows-<arch>/`.)
 
-## Run tests
+## Library lookup order
+
+1. `ITB_LIBRARY_PATH` environment variable (absolute path).
+2. `<repo>/dist/<os>-<arch>/libitb.<ext>` resolved by walking four
+   directory levels up from `bindings/python/itb/_ffi.py`.
+3. System loader path (`ld.so.cache`, `DYLD_LIBRARY_PATH`, `PATH`).
+
+## Memory
+
+Two process-wide knobs constrain Go runtime arena pacing. Both readable at libitb load time via env vars:
+
+- `ITB_GOMEMLIMIT=512MiB` — soft memory limit in bytes; supports `B` / `KiB` / `MiB` / `GiB` / `TiB` suffixes.
+- `ITB_GOGC=20` — GC trigger percentage; default `100`, lower triggers GC more aggressively.
+
+Programmatic setters override env-set values at any time. Pass `-1` to either setter to query the current value without changing it.
+
+```python
+itb.set_memory_limit(512 * 1024 * 1024)
+itb.set_gc_percent(20)
+```
+
+## Tests
 
 ```bash
 ./bindings/python/run_tests.sh
@@ -52,12 +73,32 @@ mirrors the cross-binding coverage: Single + Triple Ouroboros,
 mixed primitives, authenticated paths, blob round-trip, streaming
 chunked I/O, error paths, lockSeed lifecycle.
 
-## Library lookup order
+## Benchmarks
 
-1. `ITB_LIBRARY_PATH` environment variable (absolute path).
-2. `<repo>/dist/<os>-<arch>/libitb.<ext>` resolved by walking four
-   directory levels up from `bindings/python/itb/_ffi.py`.
-3. System loader path (`ld.so.cache`, `DYLD_LIBRARY_PATH`, `PATH`).
+A custom Go-bench-style harness lives under `easy/benchmarks/`
+and covers the four ops (`encrypt`, `decrypt`, `encrypt_auth`,
+`decrypt_auth`) across the nine PRF-grade primitives plus one
+mixed-primitive variant for both Single and Triple Ouroboros at
+1024-bit ITB key width and 16 MiB payload. See
+[`easy/benchmarks/README.md`](easy/benchmarks/README.md) for
+invocation / environment variables / output format and
+[`easy/benchmarks/BENCH.md`](easy/benchmarks/BENCH.md) for
+recorded throughput results across the canonical pass matrix.
+
+The four-pass canonical sweep (Single + Triple × ±LockSeed) that
+fills `easy/benchmarks/BENCH.md` is driven by the wrapper script
+in the binding root:
+
+```bash
+./bindings/python/run_bench.sh                  # full 4-pass canonical sweep
+./bindings/python/run_bench.sh --lockseed-only  # pass 3 + pass 4 only
+```
+
+The harness sets `LD_LIBRARY_PATH` to `dist/linux-amd64/`,
+manages `ITB_LOCKSEED` per pass, and forwards `ITB_NONCE_BITS` /
+`ITB_BENCH_FILTER` / `ITB_BENCH_MIN_SEC` straight through to the
+underlying `python -m easy.benchmarks.bench_single` /
+`python -m easy.benchmarks.bench_triple` invocations.
 
 ## Streaming AEAD
 
@@ -109,7 +150,7 @@ if not os.path.exists(SRC_PATH) or os.path.getsize(SRC_PATH) != 64 * 1024 * 1024
     with open("/dev/urandom", "rb") as r, open(SRC_PATH, "wb") as w:
         w.write(r.read(64 * 1024 * 1024))
 
-# Outer cipher key - preferred surface for HKDF / ML-KEM / key-rotation policy in user-side application. ITB inner PRF + seeds keep CSPRNG-fresh randomness per call.
+# Outer cipher key - preferred surface for HKDF / ML-KEM / key-rotation policy in user-side application. ITB Inner seeds + PRF key keep as CSPRNG derived.
 outer_key = wrapper.generate_key(wrapper.CIPHER_AES128_CTR)
 
 enc = itb.Encryptor(primitive="areion512", key_bits=1024,
@@ -204,7 +245,7 @@ def sha256_of(path: str) -> str:
             h.update(chunk)
     return h.hexdigest()
 
-# Outer cipher key - preferred surface for HKDF / ML-KEM / key-rotation policy in user-side application. ITB inner PRF + seeds keep CSPRNG-fresh randomness per call.
+# Outer cipher key - preferred surface for HKDF / ML-KEM / key-rotation policy in user-side application. ITB Inner seeds + PRF key keep as CSPRNG derived.
 outer_key = wrapper.generate_key(wrapper.CIPHER_AES128_CTR)
 
 noise = itb.Seed("areion512", 1024)
@@ -291,7 +332,7 @@ cross-contamination.
 import itb
 from itb import wrapper
 
-# Outer cipher key - preferred surface for HKDF / ML-KEM / key-rotation policy in user-side application. ITB inner PRF + seeds keep CSPRNG-fresh randomness per call.
+# Outer cipher key - preferred surface for HKDF / ML-KEM / key-rotation policy in user-side application. ITB Inner seeds + PRF key keep as CSPRNG derived.
 outer_key = wrapper.generate_key(wrapper.CIPHER_AES128_CTR)
 
 # Per-instance configuration — mutates only this encryptor's Config.
@@ -441,7 +482,7 @@ is one method call per side.
 import itb
 from itb import wrapper
 
-# Outer cipher key - preferred surface for HKDF / ML-KEM / key-rotation policy in user-side application. ITB inner PRF + seeds keep CSPRNG-fresh randomness per call.
+# Outer cipher key - preferred surface for HKDF / ML-KEM / key-rotation policy in user-side application. ITB Inner seeds + PRF key keep as CSPRNG derived.
 outer_key = wrapper.generate_key(wrapper.CIPHER_AES128_CTR)
 
 with itb.Encryptor("areion512", 2048, "hmac-blake3") as enc:
@@ -583,7 +624,7 @@ a matching encryptor with the same arguments and calls
 import itb
 from itb import wrapper
 
-# Outer cipher key - preferred surface for HKDF / ML-KEM / key-rotation policy in user-side application. ITB inner PRF + seeds keep CSPRNG-fresh randomness per call.
+# Outer cipher key - preferred surface for HKDF / ML-KEM / key-rotation policy in user-side application. ITB Inner seeds + PRF key keep as CSPRNG derived.
 outer_key = wrapper.generate_key(wrapper.CIPHER_AES128_CTR)
 
 # Per-slot primitive selection (Single Ouroboros, 3 + 1 slots).
@@ -723,7 +764,7 @@ ss = itb.Seed("areion512", 2048)  # random start CSPRNG seeds + hash key generat
 ls = itb.Seed("areion512", 2048)  # random lock CSPRNG seeds + hash key generated
 ns.attach_lock_seed(ls)
 
-# Outer cipher key - preferred surface for HKDF / ML-KEM / key-rotation policy in user-side application. ITB inner PRF + seeds keep CSPRNG-fresh randomness per call.
+# Outer cipher key - preferred surface for HKDF / ML-KEM / key-rotation policy in user-side application. ITB Inner seeds + PRF key keep as CSPRNG derived.
 outer_key = wrapper.generate_key(wrapper.CIPHER_AES128_CTR)
 
 plaintext = b"any text or binary data - including 0x00 bytes"
@@ -866,7 +907,7 @@ ns.attach_lock_seed(ls)
 mac_key = secrets.token_bytes(32)
 mac = itb.MAC("hmac-blake3", mac_key)
 
-# Outer cipher key - preferred surface for HKDF / ML-KEM / key-rotation policy in user-side application. ITB inner PRF + seeds keep CSPRNG-fresh randomness per call.
+# Outer cipher key - preferred surface for HKDF / ML-KEM / key-rotation policy in user-side application. ITB Inner seeds + PRF key keep as CSPRNG derived.
 outer_key = wrapper.generate_key(wrapper.CIPHER_AES128_CTR)
 
 plaintext = b"any text or binary data - including 0x00 bytes"
@@ -958,6 +999,18 @@ counterparts: `itb.StreamEncryptor3` / `itb.StreamDecryptor3` /
 All seeds passed to one `encrypt` / `decrypt` call must share the
 same native hash width. Mixing widths raises
 `ITBError(STATUS_SEED_WIDTH_MIX)`.
+
+## MAC primitives
+
+Names match the libitb MAC registry; ordering matches that registry's declaration order.
+
+| MAC | Key bytes | Tag bytes | Underlying primitive |
+|---|---|---|---|
+| `kmac256` | 32 | 32 | KMAC256 (Keccak-derived) |
+| `hmac-sha256` | 32 | 32 | HMAC over SHA-256 |
+| `hmac-blake3` | 32 | 32 | HMAC over BLAKE3 |
+
+`kmac256` and `hmac-sha256` accept keys 16 bytes and longer; the binding fleet's tests and examples use 32 bytes uniformly across primitives for cross-binding consistency. `hmac-blake3` requires exactly 32 bytes by construction.
 
 ## Process-wide configuration
 
@@ -1086,29 +1139,137 @@ cipher entry point. Pass at least one byte.
 | 24 | `STATUS_STREAM_AFTER_FINAL` | Streaming AEAD transcript carries chunk bytes after the terminator; raised as `ItbStreamAfterFinalError` |
 | 99 | `STATUS_INTERNAL` | Generic "internal" sentinel for paths the caller cannot recover from at the binding layer |
 
-## Benchmarks
+## Constraints
 
-A custom Go-bench-style harness lives under `easy/benchmarks/`
-and covers the four ops (`encrypt`, `decrypt`, `encrypt_auth`,
-`decrypt_auth`) across the nine PRF-grade primitives plus one
-mixed-primitive variant for both Single and Triple Ouroboros at
-1024-bit ITB key width and 16 MiB payload. See
-[`easy/benchmarks/README.md`](easy/benchmarks/README.md) for
-invocation / environment variables / output format and
-[`easy/benchmarks/BENCH.md`](easy/benchmarks/BENCH.md) for
-recorded throughput results across the canonical pass matrix.
+- **Python 3.9 minimum.** The package's `pyproject.toml` declares
+  `requires-python = ">=3.9"`. Type-hint syntax (`X | None`, builtin
+  generics) and modern `dataclasses` features are used throughout the
+  wrapper.
+- **Single distribution.** All consumer-visible declarations live
+  under the `itb` package; the FFI substrate (`itb._sys`) is kept
+  separate so audits can read it independently.
+- **libitb.so required at runtime.** The package loads
+  `dist/<os>-<arch>/libitb.<ext>` via cffi at import time; the shared
+  library must be built first and reachable through the loader's
+  search path.
+- **External runtime deps.** The single non-stdlib runtime dependency
+  is `cffi >= 1.15`. The test runner additionally requires `pytest`.
+- **Frozen C ABI.** The `ITB_*` exports declared by the cffi-parsed
+  header (synced from `dist/<os>-<arch>/libitb.h`) are the contract;
+  the binding does not extend or reshape them.
+- **No `dlopen` indirection.** cffi resolves symbols at import time
+  against the located `libitb.<ext>`. Consumers wanting runtime FFI
+  loading against a different `libitb` can override the search via
+  the documented environment variables.
 
-The four-pass canonical sweep (Single + Triple × ±LockSeed) that
-fills `easy/benchmarks/BENCH.md` is driven by the wrapper script
-in the binding root:
+## API Overview
 
-```bash
-./bindings/python/run_bench.sh                  # full 4-pass canonical sweep
-./bindings/python/run_bench.sh --lockseed-only  # pass 3 + pass 4 only
-```
+Every public symbol is reachable from the top-level `itb` namespace
+(via `itb.__all__`). Submodule `itb.wrapper` exposes the
+format-deniability outer-cipher surface and is imported on demand
+(`from itb import wrapper`).
 
-The harness sets `LD_LIBRARY_PATH` to `dist/linux-amd64/`,
-manages `ITB_LOCKSEED` per pass, and forwards `ITB_NONCE_BITS` /
-`ITB_BENCH_FILTER` / `ITB_BENCH_MIN_SEC` straight through to the
-underlying `python -m easy.benchmarks.bench_single` /
-`python -m easy.benchmarks.bench_triple` invocations.
+### Library metadata
+
+| Symbol | Purpose |
+|---|---|
+| `itb.version() -> str` | Library version `"<major>.<minor>.<patch>"` |
+| `itb.max_key_bits() -> int` | Max supported ITB key width in bits |
+| `itb.channels() -> int` | Number of native channel slots |
+| `itb.header_size() -> int` | Current chunk header size in bytes |
+| `itb.parse_chunk_len(header: bytes) -> int` | Parse a chunk header, return total on-wire chunk length |
+| `itb.list_hashes() -> list[tuple[str, int]]` | `(name, width_bits)` catalogue |
+| `itb.list_macs() -> list[tuple[str, int, int, int]]` | `(name, key_size, tag_size, min_key_bytes)` catalogue |
+| `itb.last_error() -> str` | Per-thread last-error message |
+
+### Process-wide configuration
+
+| Symbol | Purpose |
+|---|---|
+| `itb.set_bit_soup(mode: int)` / `itb.get_bit_soup() -> int` | Bit Soup mode toggle |
+| `itb.set_lock_soup(mode: int)` / `itb.get_lock_soup() -> int` | Lock Soup mode toggle |
+| `itb.set_max_workers(n: int)` / `itb.get_max_workers() -> int` | Worker pool cap |
+| `itb.set_nonce_bits(n: int)` / `itb.get_nonce_bits() -> int` | Nonce width (128 / 256 / 512) |
+| `itb.set_barrier_fill(n: int)` / `itb.get_barrier_fill() -> int` | Barrier-fill factor |
+| `itb.set_memory_limit(limit: int) -> int` | Go runtime heap soft limit in bytes; pass negative to query only |
+| `itb.set_gc_percent(pct: int) -> int` | Go GC trigger percentage; pass negative to query only |
+
+### Seeds and MAC
+
+| Symbol | Purpose |
+|---|---|
+| `itb.Seed(hash_name: str, key_bits: int)` | CSPRNG-fresh seed |
+| `itb.Seed.from_components(hash_name, key_bits, components)` | Reconstruct from explicit components |
+| `Seed.width` / `Seed.hash_name` / `Seed.hash_key` / `Seed.components` / `Seed.attach_lock_seed(lock_seed)` | Introspection + lock-seed attachment |
+| `itb.MAC(mac_name: str, key: bytes)` | Construct MAC handle (32-byte keys across the shipped catalogue) |
+
+### Low-level cipher (free functions)
+
+| Symbol | Purpose |
+|---|---|
+| `itb.encrypt(noise, data, start, plaintext) -> bytes` | Single Message encrypt |
+| `itb.decrypt(noise, data, start, ciphertext) -> bytes` | Single Message decrypt |
+| `itb.encrypt_auth(noise, data, start, mac, plaintext)` / `itb.decrypt_auth(...)` | MAC-authenticated counterparts |
+| `itb.encrypt_triple(noise, d1, d2, d3, s1, s2, s3, plaintext)` / `itb.decrypt_triple(...)` | Triple Ouroboros |
+| `itb.encrypt_auth_triple(...)` / `itb.decrypt_auth_triple(...)` | Triple Ouroboros MAC-authenticated |
+
+### Easy Mode encryptor
+
+| Symbol | Purpose |
+|---|---|
+| `itb.Encryptor(primitive, key_bits, mac=None, mode="single")` | Single-primitive constructor |
+| `itb.Encryptor.mixed(primitives, key_bits, mac=None)` | Mixed-primitive Single Ouroboros |
+| `itb.Encryptor.mixed3(primitives, key_bits, mac=None)` | Mixed-primitive Triple Ouroboros |
+| `enc.encrypt(plaintext)` / `enc.decrypt(ciphertext)` | Cipher entry points |
+| `enc.encrypt_auth(plaintext)` / `enc.decrypt_auth(ciphertext)` | MAC-authenticated cipher entry points |
+| `enc.set_nonce_bits / set_barrier_fill / set_bit_soup / set_lock_soup / set_lock_seed / set_chunk_size` | Per-instance setters |
+| `enc.primitive / mac_name / key_bits / mode / nonce_bits / header_size / has_prf_keys / is_mixed / seed_count` | Accessors |
+| `enc.prf_key(slot)` / `enc.mac_key()` / `enc.seed_components(slot)` | Key-material accessors |
+| `enc.export()` / `enc.import_state(blob)` | State-blob persistence |
+| `itb.peek_config(blob) -> dict` / `itb.last_mismatch_field() -> str` | Pre-import discriminator + mismatch-field accessor |
+| `enc.close()` | Release encryptor (idempotent) |
+
+### Streaming AEAD
+
+| Symbol | Purpose |
+|---|---|
+| `itb.encrypt_stream(read_fn, write_fn, noise, data, start, mac=None)` / `itb.decrypt_stream(...)` | Single Low-Level streams |
+| `itb.encrypt_stream_triple(read_fn, write_fn, noise, d1, d2, d3, s1, s2, s3, mac=None)` / `itb.decrypt_stream_triple(...)` | Triple Low-Level streams |
+| `itb.encrypt_stream_auth(...)` / `itb.decrypt_stream_auth(...)` | Single Low-Level Streaming AEAD |
+| `itb.encrypt_stream_auth_triple(...)` / `itb.decrypt_stream_auth_triple(...)` | Triple Low-Level Streaming AEAD |
+| `itb.StreamEncryptor / StreamDecryptor / StreamEncryptor3 / StreamDecryptor3` | Push-style Low-Level streamers |
+| `itb.StreamEncryptorAuth / StreamDecryptorAuth / StreamEncryptorAuth3 / StreamDecryptorAuth3` | Push-style Streaming AEAD streamers |
+| `itb.DEFAULT_CHUNK_SIZE` | Default streaming chunk size in bytes |
+
+### Native Blob
+
+| Symbol | Purpose |
+|---|---|
+| `itb.Blob128() / Blob256() / Blob512()` | Width-specific Native Blob handles |
+| `blob.set_key(slot, key)` / `blob.set_components(slot, components)` / `blob.set_mac_key(key)` / `blob.set_mac_name(name)` | Field setters |
+| `blob.get_key(slot)` / `blob.get_components(slot)` / `blob.get_mac_key()` / `blob.get_mac_name()` | Field getters |
+| `blob.export(opts=0)` / `blob.export_triple(opts=0)` / `blob.import_blob(payload)` / `blob.import_triple(payload)` | Serialisation |
+| `itb.SLOT_N / SLOT_D / SLOT_S / SLOT_L / SLOT_D1 / SLOT_D2 / SLOT_D3 / SLOT_S1 / SLOT_S2 / SLOT_S3` | Slot indices |
+| `itb.OPT_LOCKSEED / OPT_MAC` | Export opt-in flag bits |
+
+### Wrapper (`itb.wrapper`)
+
+| Symbol | Purpose |
+|---|---|
+| `wrapper.key_size(cipher_name: str) -> int` | Wrapper-cipher key size in bytes |
+| `wrapper.nonce_size(cipher_name: str) -> int` | Wire nonce size in bytes |
+| `wrapper.generate_key(cipher_name: str) -> bytes` | CSPRNG-fresh wrapper key |
+| `wrapper.wrap(cipher_name, key, blob) -> bytes` / `wrapper.unwrap(cipher_name, key, wire) -> bytes` | Single Message Wrap / Unwrap |
+| `wrapper.wrap_in_place(cipher_name, key, buf) -> bytes` / `wrapper.unwrap_in_place(cipher_name, key, wire) -> memoryview` | In-place Wrap / Unwrap |
+| `wrapper.WrapStreamWriter(cipher_name, key)` / `wrapper.UnwrapStreamReader(cipher_name, key, wire_nonce)` | Streaming wrap writer / unwrap reader |
+
+Wrapper cipher names: `aes-128-ctr`, `chacha20`, `siphash24`.
+
+### Error model
+
+| Symbol | Purpose |
+|---|---|
+| `itb.ITBError` | Base exception class; `.code` carries the numeric status |
+| `itb.EasyMismatchError / BlobModeMismatchError / BlobMalformedError / BlobVersionTooNewError` | Typed subclasses for cold-path discriminators |
+| `itb.ItbStreamTruncatedError / ItbStreamAfterFinalError` | Streaming AEAD transcript-shape exceptions |
+| `itb.STATUS_OK / STATUS_BAD_HASH / ... / STATUS_INTERNAL` | 24 status-code constants plus `STATUS_INTERNAL` |

@@ -150,6 +150,7 @@ else:
 _CDEF = f"""
 typedef {_PTR_TYPE} uintptr_t;
 typedef {_SIZE_TYPE} size_t;
+typedef long long int64_t;
 
 extern int ITB_Version(char* out, size_t capBytes, size_t* outLen);
 extern int ITB_HashCount(void);
@@ -242,6 +243,8 @@ extern int ITB_SetNonceBits(int n);
 extern int ITB_GetNonceBits(void);
 extern int ITB_SetBarrierFill(int n);
 extern int ITB_GetBarrierFill(void);
+extern int64_t ITB_SetMemoryLimit(int64_t limit);
+extern int ITB_SetGCPercent(int pct);
 
 extern int ITB_MaxKeyBits(void);
 extern int ITB_Channels(void);
@@ -795,6 +798,25 @@ def set_barrier_fill(n: int) -> None:
 def get_barrier_fill() -> int:
     """Returns the current process-global barrier-fill margin (1 / 2 / 4 / 8 / 16 / 32)."""
     return int(_lib.ITB_GetBarrierFill())
+
+
+def set_memory_limit(limit: int) -> int:
+    """Configures the Go runtime's heap-size soft limit (bytes). Pass -1
+    (or any negative value) to query the current limit without changing
+    it; the previous limit is returned. Setter calls override any
+    ITB_GOMEMLIMIT env var set at libitb load time.
+    """
+    return int(_lib.ITB_SetMemoryLimit(int(limit)))
+
+
+def set_gc_percent(pct: int) -> int:
+    """Configures the Go runtime's GC trigger percentage. The default is
+    100 (GC fires at +100% heap growth); lower values trigger GC more
+    aggressively. Pass -1 (or any negative value) to query the current
+    value without changing it; the previous value is returned. Setter
+    calls override any ITB_GOGC env var set at libitb load time.
+    """
+    return int(_lib.ITB_SetGCPercent(int(pct)))
 
 
 class Seed:
