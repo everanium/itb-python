@@ -161,7 +161,7 @@ try:
     with open(SRC_PATH, "rb") as fin, open(ENC_PATH + ".inner", "wb") as fout:
         enc.encrypt_stream_auth(fin, fout, chunk_size=CHUNK_SIZE)
 
-    # Format-deniability ITB masking via outer-cipher streaming wrapper (AES-128-CTR) - same ~0% overhead in stream mode (Recommended in every case).
+    # Format-deniability ITB masking via outer-cipher wrapper (AES-128-CTR) ~0% overhead (Recommended in every case).
     with wrapper.WrapStreamWriter(wrapper.CIPHER_AES128_CTR, outer_key) as ww, \
             open(ENC_PATH + ".inner", "rb") as fin, open(ENC_PATH, "wb") as fout:
         fout.write(ww.nonce)
@@ -260,7 +260,7 @@ try:
         itb.encrypt_stream_auth(noise, data, start, mac, fin, fout,
                                 chunk_size=CHUNK_SIZE)
 
-    # Format-deniability ITB masking via outer-cipher streaming wrapper (AES-128-CTR) - same ~0% overhead in stream mode (Recommended in every case).
+    # Format-deniability ITB masking via outer-cipher wrapper (AES-128-CTR) ~0% overhead (Recommended in every case).
     with wrapper.WrapStreamWriter(wrapper.CIPHER_AES128_CTR, outer_key) as ww, \
             open(ENC_PATH + ".inner", "rb") as fin, open(ENC_PATH, "wb") as fout:
         fout.write(ww.nonce)
@@ -373,7 +373,7 @@ with itb.Encryptor("areion512", 2048, "hmac-blake3") as enc:
     encrypted = enc.encrypt(plaintext)
     print(f"encrypted: {len(encrypted)} bytes")
 
-    # Format-deniability ITB masking through outer cipher AES-128-CTR with ~0% overhead over ITB Encrypt / Decrypt (Recommended in every case).
+    # Format-deniability ITB masking via outer-cipher wrapper (AES-128-CTR) ~0% overhead (Recommended in every case).
     mutable_blob = bytearray(encrypted)
     nonce = wrapper.wrap_in_place(wrapper.CIPHER_AES128_CTR, outer_key, mutable_blob)
     wire = bytes(nonce) + bytes(mutable_blob)
@@ -512,7 +512,7 @@ with itb.Encryptor("areion512", 2048, "hmac-blake3") as enc:
     encrypted = enc.encrypt_auth(plaintext)
     print(f"encrypted: {len(encrypted)} bytes")
 
-    # Format-deniability ITB masking through outer cipher AES-128-CTR with ~0% overhead over ITB Encrypt / Decrypt (Recommended in every case).
+    # Format-deniability ITB masking via outer-cipher wrapper (AES-128-CTR) ~0% overhead (Recommended in every case).
     mutable_blob = bytearray(encrypted)
     nonce = wrapper.wrap_in_place(wrapper.CIPHER_AES128_CTR, outer_key, mutable_blob)
     wire = bytes(nonce) + bytes(mutable_blob)
@@ -672,7 +672,7 @@ try:
     encrypted = enc.encrypt_auth(plaintext)
     print(f"encrypted: {len(encrypted)} bytes")
 
-    # Format-deniability ITB masking through outer cipher AES-128-CTR with ~0% overhead over ITB Encrypt / Decrypt (Recommended in every case).
+    # Format-deniability ITB masking via outer-cipher wrapper (AES-128-CTR) ~0% overhead (Recommended in every case).
     mutable_blob = bytearray(encrypted)
     nonce = wrapper.wrap_in_place(wrapper.CIPHER_AES128_CTR, outer_key, mutable_blob)
     wire = bytes(nonce) + bytes(mutable_blob)
@@ -776,7 +776,7 @@ try:
     encrypted = itb.encrypt(ns, ds, ss, plaintext)
     print(f"encrypted: {len(encrypted)} bytes")
 
-    # Format-deniability ITB masking through outer cipher AES-128-CTR with ~0% overhead over ITB Encrypt / Decrypt (Recommended in every case).
+    # Format-deniability ITB masking via outer-cipher wrapper (AES-128-CTR) ~0% overhead (Recommended in every case).
     mutable_blob = bytearray(encrypted)
     nonce = wrapper.wrap_in_place(wrapper.CIPHER_AES128_CTR, outer_key, mutable_blob)
     wire = bytes(nonce) + bytes(mutable_blob)
@@ -919,7 +919,7 @@ try:
     encrypted = itb.encrypt_auth(ns, ds, ss, mac, plaintext)
     print(f"encrypted: {len(encrypted)} bytes")
 
-    # Format-deniability ITB masking through outer cipher AES-128-CTR with ~0% overhead over ITB Encrypt / Decrypt (Recommended in every case).
+    # Format-deniability ITB masking via outer-cipher wrapper (AES-128-CTR) ~0% overhead (Recommended in every case).
     mutable_blob = bytearray(encrypted)
     nonce = wrapper.wrap_in_place(wrapper.CIPHER_AES128_CTR, outer_key, mutable_blob)
     wire = bytes(nonce) + bytes(mutable_blob)
