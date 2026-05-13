@@ -5,9 +5,9 @@ Run from repo root after building the shared library:
     go build -trimpath -buildmode=c-shared -o dist/linux-amd64/libitb.so ./cmd/cshared
     python -m pytest bindings/python/tests/
 
-The tests exercise the same surface as cmd/cshared/ctest/test_smoke.c
-plus a few Python-level idioms (context manager, exception classes,
-bytearray / memoryview inputs).
+The tests exercise the libitb public surface plus a few Python-level
+idioms (context manager, exception classes, bytearray / memoryview
+inputs).
 """
 
 import os

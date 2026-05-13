@@ -1,6 +1,6 @@
 """Python eitb — runs every wrapper × ITB example end-to-end.
 
-Mirrors ``cmd/eitb/main.go`` in the root repository, adapted to the
+Mirrors ``tools/eitb/main.go`` in the root repository, adapted to the
 Python binding asymmetry: there is no Streaming No MAC IO-Driven
 example (``noaead-easy-io`` / ``noaead-lowlevel-io`` from the Go
 matrix), because the Python binding does not expose a file-like /

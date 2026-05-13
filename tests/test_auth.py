@@ -1,7 +1,6 @@
 """End-to-end Python binding tests for Authenticated Encryption.
 
-Exercises the same matrix as cmd/cshared/ctest/test_smoke.c
-auth section: 3 MACs × 3 hash widths × {Single, Triple} round trip
+Exercises 3 MACs × 3 hash widths × {Single, Triple} round trip
 plus tamper rejection. Run from repo root after building libitb.so:
 
     go build -trimpath -buildmode=c-shared -o dist/linux-amd64/libitb.so ./cmd/cshared
