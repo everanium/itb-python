@@ -528,8 +528,7 @@ class StreamEncryptorAuth:
         self._cum_pixels = 0
         self._header_size = header_size()
         self._prefix_emitted = False
-        # Per-stream output buffer cache (Bonus 1b in .NEXTBIND.md
-        # §7.1). Separate from the per-encryptor cache on
+        # Per-stream output buffer cache. Separate from the per-encryptor cache on
         # :class:`itb.easy.Encryptor` — the streaming class owns its
         # own cache because the helper free functions in :mod:`_ffi`
         # have no encryptor context to attach to.
@@ -645,8 +644,8 @@ class StreamDecryptorAuth:
         self._header_size = header_size()
         self._width = noise.width
         self._seen_final = False
-        # Per-stream output buffer cache (Bonus 1b in .NEXTBIND.md
-        # §7.1). See :class:`StreamEncryptorAuth` for rationale.
+        # Per-stream output buffer cache.
+        # See :class:`StreamEncryptorAuth` for rationale.
         self._out_cache = _StreamAuthCache()
 
     def _drain(self) -> None:
@@ -765,8 +764,8 @@ class StreamEncryptorAuth3:
         self._cum_pixels = 0
         self._header_size = header_size()
         self._prefix_emitted = False
-        # Per-stream output buffer cache (Bonus 1b in .NEXTBIND.md
-        # §7.1). See :class:`StreamEncryptorAuth` for rationale.
+        # Per-stream output buffer cache.
+        # See :class:`StreamEncryptorAuth` for rationale.
         self._out_cache = _StreamAuthCache()
 
     def _emit_prefix(self) -> None:
@@ -854,8 +853,8 @@ class StreamDecryptorAuth3:
         self._header_size = header_size()
         self._width = noise.width
         self._seen_final = False
-        # Per-stream output buffer cache (Bonus 1b in .NEXTBIND.md
-        # §7.1). See :class:`StreamEncryptorAuth` for rationale.
+        # Per-stream output buffer cache.
+        # See :class:`StreamEncryptorAuth` for rationale.
         self._out_cache = _StreamAuthCache()
 
     def _drain(self) -> None:

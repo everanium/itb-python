@@ -1169,7 +1169,7 @@ def _enc_dec_auth(fn, noise: Seed, data: Seed, start: Seed, mac: MAC, payload: b
     # would double the work; the formula sizes the buffer correctly
     # in one call across the full primitive / mode / nonce-bits /
     # barrier-fill matrix. STATUS_BUFFER_TOO_SMALL retry stays as the
-    # safety net per .NEXTBIND.md §7.1.
+    # safety net.
     payload_len = len(payload)
     cap = max(131072, (payload_len * 5) // 4 + 131072)
     out_buf = _ffi.new("unsigned char[]", cap)
@@ -1194,8 +1194,7 @@ def _enc_dec_auth_triple(
 ) -> bytes:
     # Pre-allocate from the 1.25× + 128 KiB envelope (mirror of
     # easy.Encryptor._cipher_call); see _enc_dec_auth above for the
-    # rationale. STATUS_BUFFER_TOO_SMALL retry stays as the safety net
-    # per .NEXTBIND.md §7.1.
+    # rationale. STATUS_BUFFER_TOO_SMALL retry stays as the safety net.
     payload_len = len(payload)
     cap = max(131072, (payload_len * 5) // 4 + 131072)
     out_buf = _ffi.new("unsigned char[]", cap)
@@ -1283,7 +1282,7 @@ def _encrypt_or_decrypt(fn, noise: Seed, data: Seed, start: Seed, payload: bytes
     # would double the work; the formula sizes the buffer correctly
     # in one call across the full primitive / mode / nonce-bits /
     # barrier-fill matrix. STATUS_BUFFER_TOO_SMALL retry stays as the
-    # safety net per .NEXTBIND.md §7.1.
+    # safety net.
     payload_len = len(payload)
     cap = max(131072, (payload_len * 5) // 4 + 131072)
     out_buf = _ffi.new("unsigned char[]", cap)
@@ -1312,7 +1311,7 @@ def _encrypt_or_decrypt_triple(
     # Pre-allocate from the 1.25× + 128 KiB envelope (mirror of
     # easy.Encryptor._cipher_call); see _encrypt_or_decrypt above for
     # the rationale. STATUS_BUFFER_TOO_SMALL retry stays as the safety
-    # net per .NEXTBIND.md §7.1.
+    # net.
     payload_len = len(payload)
     cap = max(131072, (payload_len * 5) // 4 + 131072)
     out_buf = _ffi.new("unsigned char[]", cap)
@@ -1417,9 +1416,8 @@ class _StreamAuthCache:
     """Per-stream output buffer cache for Streaming AEAD per-chunk
     dispatchers. Mirrors the per-encryptor ``_out_buf`` / ``_out_cap``
     pair on :class:`itb.easy.Encryptor` but lives on the streaming
-    class instance — Bonus 1b in .NEXTBIND.md §7.1. The cache grows
-    on demand with the same wipe-on-grow + 1.25× + 128 KiB envelope
-    shape as :meth:`itb.easy.Encryptor._cipher_call`.
+    class instance. The cache grows  on demand with the same wipe-on-grow + 1.25× 
+    + 128 KiB envelope shape as :meth:`itb.easy.Encryptor._cipher_call`.
 
     The class is not thread-safe; each :class:`StreamEncryptorAuth` /
     :class:`StreamDecryptorAuth` instance owns one cache, and a
@@ -1470,12 +1468,11 @@ def _emit_chunk_auth_single(
     NULL/0 probe would double the work. The +32-byte tag and +1-byte
     flag inherent to the Streaming AEAD per-chunk wire layout are
     inside the 128 KiB pad's headroom even at chunk_size = 1.
-    STATUS_BUFFER_TOO_SMALL retry stays as the safety net per
-    .NEXTBIND.md §7.1.
+    STATUS_BUFFER_TOO_SMALL retry stays as the safety net.
 
     When ``cache`` is provided, the per-stream buffer is reused
-    instead of allocating a fresh cffi slab per chunk (Bonus 1b in
-    §7.1). When ``None``, falls back to the per-call allocation."""
+    instead of allocating a fresh cffi slab per chunk. When ``None``,
+    falls back to the per-call allocation."""
     fn = _enc_auth_single_for_width(width)
     sid_buf = _ffi.new(f"unsigned char[{STREAM_ID_LEN}]", stream_id)
     in_arg = plaintext if plaintext else _ffi.NULL
@@ -1528,12 +1525,11 @@ def _emit_chunk_auth_triple(
     """Per-chunk encrypt dispatch (Triple Ouroboros + MAC). Pre-
     allocates from the 1.25× + 128 KiB envelope; see
     _emit_chunk_auth_single above for the rationale.
-    STATUS_BUFFER_TOO_SMALL retry stays as the safety net per
-    .NEXTBIND.md §7.1.
+    STATUS_BUFFER_TOO_SMALL retry stays as the safety net.
 
     When ``cache`` is provided, the per-stream buffer is reused
-    instead of allocating a fresh cffi slab per chunk (Bonus 1b in
-    §7.1). When ``None``, falls back to the per-call allocation."""
+    instead of allocating a fresh cffi slab per chunk. When ``None``,
+    falls back to the per-call allocation."""
     fn = _enc_auth_triple_for_width(width)
     sid_buf = _ffi.new(f"unsigned char[{STREAM_ID_LEN}]", stream_id)
     in_arg = plaintext if plaintext else _ffi.NULL
@@ -1591,11 +1587,11 @@ def _consume_chunk_auth_single(
     would double the work. Returns ``(plaintext, final_flag)``.
     Surfaces ITBError on any non-OK status — STATUS_MAC_FAILURE on
     tampered transcript, etc. STATUS_BUFFER_TOO_SMALL retry stays as
-    the safety net per .NEXTBIND.md §7.1.
+    the safety net.
 
     When ``cache`` is provided, the per-stream buffer is reused
-    instead of allocating a fresh cffi slab per chunk (Bonus 1b in
-    §7.1). When ``None``, falls back to the per-call allocation."""
+    instead of allocating a fresh cffi slab per chunk. When ``None``,
+    falls back to the per-call allocation."""
     fn = _dec_auth_single_for_width(width)
     sid_buf = _ffi.new(f"unsigned char[{STREAM_ID_LEN}]", stream_id)
     in_arg = ciphertext if ciphertext else _ffi.NULL
@@ -1648,12 +1644,11 @@ def _consume_chunk_auth_triple(
     """Per-chunk decrypt dispatch (Triple Ouroboros + MAC). Pre-
     allocates from the 1.25× + 128 KiB envelope; see
     _consume_chunk_auth_single above for the rationale.
-    STATUS_BUFFER_TOO_SMALL retry stays as the safety net per
-    .NEXTBIND.md §7.1.
+    STATUS_BUFFER_TOO_SMALL retry stays as the safety net.
 
     When ``cache`` is provided, the per-stream buffer is reused
-    instead of allocating a fresh cffi slab per chunk (Bonus 1b in
-    §7.1). When ``None``, falls back to the per-call allocation."""
+    instead of allocating a fresh cffi slab per chunk. When ``None``,
+    falls back to the per-call allocation."""
     fn = _dec_auth_triple_for_width(width)
     sid_buf = _ffi.new(f"unsigned char[{STREAM_ID_LEN}]", stream_id)
     in_arg = ciphertext if ciphertext else _ffi.NULL

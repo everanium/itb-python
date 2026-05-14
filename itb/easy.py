@@ -1001,12 +1001,12 @@ class Encryptor:
         +1-byte flag inherent to the Streaming AEAD per-chunk wire
         layout are inside the 128 KiB pad's headroom even at
         chunk_size = 1. STATUS_BUFFER_TOO_SMALL retry stays as the
-        safety net per .NEXTBIND.md §7.1.
+        safety net.
 
-        Reuses the per-encryptor ``_out_buf`` / ``_out_cap`` cache
-        (Bonus 1 in §7.1) — same scope as the Single Message
-        :meth:`_cipher_call` path — so the streaming hot loop
-        amortises the cffi allocation across every chunk."""
+        Reuses the per-encryptor ``_out_buf`` / ``_out_cap`` cache.
+        Same scope as the Single Message :meth:`_cipher_call` path.
+        So the streaming hot loop  amortises the cffi allocation
+        across every chunk."""
         self._check_open()
         sid_buf = _ffi.new(f"unsigned char[{_STREAM_ID_LEN}]", stream_id)
         in_arg = plaintext if plaintext else _ffi.NULL
@@ -1047,12 +1047,10 @@ class Encryptor:
         ABI export. Pre-allocates from the 1.25× + 128 KiB envelope
         (mirror of :meth:`_cipher_call`); see :meth:`_stream_auth_emit`
         for the rationale. STATUS_BUFFER_TOO_SMALL retry stays as the
-        safety net per .NEXTBIND.md §7.1. Returns
-        ``(plaintext, final_flag)``.
+        safety net. Returns ``(plaintext, final_flag)``.
 
-        Reuses the per-encryptor ``_out_buf`` / ``_out_cap`` cache
-        (Bonus 1 in §7.1) — same scope as the Single Message
-        :meth:`_cipher_call` path."""
+        Reuses the per-encryptor ``_out_buf`` / ``_out_cap`` cache.
+        Same scope as the Single Message :meth:`_cipher_call` path."""
         self._check_open()
         sid_buf = _ffi.new(f"unsigned char[{_STREAM_ID_LEN}]", stream_id)
         in_arg = ciphertext if ciphertext else _ffi.NULL
