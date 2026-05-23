@@ -527,10 +527,15 @@ extern int ITB_Easy_DecryptStreamAuth(
  * 12 entry points exported by cmd/cshared/main.go for the
  * github.com/everanium/itb/wrapper Go package. The cipher_name
  * argument selects one of three outer keystream ciphers
- * ("aes" / "chacha" / "siphash"). */
+ * ("aescmac" / "chacha20" / "siphash24"). */
 
 extern int ITB_WrapperKeySize(char* cipherName, size_t* outSize);
 extern int ITB_WrapperNonceSize(char* cipherName, size_t* outSize);
+
+extern int ITB_WrapperDeriveKey(
+    char* cipherName,
+    void* master, size_t masterLen,
+    void* out, size_t outCap, size_t* outLen);
 
 extern int ITB_Wrap(
     char* cipherName,

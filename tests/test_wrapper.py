@@ -85,6 +85,34 @@ class TestWrapperConstants(unittest.TestCase):
                 self.assertNotEqual(k1, k2)
 
 
+class TestDeriveKey(unittest.TestCase):
+    def test_derived_key_length(self):
+        for cipher in CIPHERS:
+            with self.subTest(cipher=cipher):
+                master = secrets.token_bytes(32)
+                derived = wrapper.derive_key(cipher, master)
+                self.assertEqual(len(derived), wrapper.key_size(cipher))
+
+    def test_deterministic(self):
+        """Same (cipher_name, master) yields the same key across calls."""
+        for cipher in CIPHERS:
+            with self.subTest(cipher=cipher):
+                master = secrets.token_bytes(32)
+                k1 = wrapper.derive_key(cipher, master)
+                k2 = wrapper.derive_key(cipher, master)
+                self.assertEqual(k1, k2)
+
+    def test_derived_key_roundtrips(self):
+        """A key derived from a master round-trips through wrap/unwrap."""
+        for cipher in CIPHERS:
+            with self.subTest(cipher=cipher):
+                master = secrets.token_bytes(32)
+                key = wrapper.derive_key(cipher, master)
+                blob = secrets.token_bytes(1024)
+                wire = wrapper.wrap(cipher, key, blob)
+                self.assertEqual(wrapper.unwrap(cipher, key, wire), blob)
+
+
 class TestWrapUnwrap(unittest.TestCase):
     def test_roundtrip_per_cipher(self):
         for cipher in CIPHERS:
