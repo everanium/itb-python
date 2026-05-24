@@ -7,8 +7,9 @@ matrix), because the Python binding does not expose a file-like /
 stream-like wrapper writer/reader pair for Non-AEAD streaming. The
 Non-AEAD streaming arm is the User-Driven Loop only.
 
-Matrix: 8 examples × 3 outer ciphers (aes / chacha / siphash) =
-24 PASS/FAIL cells.
+Matrix: 8 examples × 9 outer ciphers (areion256 / areion512 /
+siphash24 / aescmac / blake2b256 / blake2b512 / blake2s / blake3 /
+chacha20) = 72 PASS/FAIL cells.
 
 Examples covered:
 
@@ -32,7 +33,7 @@ Usage::
 
     PYTHONPATH=bindings/python python3 -m bindings.python.eitb.eitb
     PYTHONPATH=bindings/python python3 -m bindings.python.eitb.eitb --example aead
-    PYTHONPATH=bindings/python python3 -m bindings.python.eitb.eitb --cipher aes -v
+    PYTHONPATH=bindings/python python3 -m bindings.python.eitb.eitb --cipher aescmac -v
 """
 
 from __future__ import annotations
@@ -455,7 +456,9 @@ def main(argv=None):
     )
     parser.add_argument(
         "--cipher", default="",
-        help="run only the given outer cipher (aes|chacha|siphash)",
+        help="run only the given outer cipher (one of CIPHER_NAMES, "
+             "e.g. areion256|areion512|siphash24|aescmac|blake2b256|"
+             "blake2b512|blake2s|blake3|chacha20)",
     )
     parser.add_argument(
         "-v", "--verbose", action="store_true",

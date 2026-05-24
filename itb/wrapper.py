@@ -3,8 +3,10 @@
 Python-idiomatic surface over the 12 ``ITB_Wrap*`` / ``ITB_Unwrap*`` /
 ``ITB_WrapStream*`` / ``ITB_UnwrapStream*`` / ``ITB_WrapperKeySize`` /
 ``ITB_WrapperNonceSize`` exports in ``cmd/cshared/main.go``. Wraps an
-ITB ciphertext under one of three outer keystream ciphers
-(AES-128-CTR / ChaCha20 / SipHash-2-4 in CTR mode) so the on-wire
+ITB ciphertext under one of nine PRF-grade outer keystream ciphers
+(Areion-SoEM-256 / Areion-SoEM-512 / SipHash-2-4 in CTR mode /
+AES-128-CTR / BLAKE2b-256 / BLAKE2b-512 / BLAKE2s / BLAKE3 /
+ChaCha20 (RFC8439)) so the on-wire
 bytes carry no ITB-specific format pattern (W / H / container layout
 for Non-AEAD; 32-byte streamID prefix + per-chunk metadata for
 Streaming AEAD). The wrap exists for format-deniability ONLY — ITB
@@ -40,11 +42,16 @@ prefixes also XOR through):
     ...     ww.update(b"chunk-2")
     ...     wire = ww.nonce + ww.update(b"...")  # accumulator pattern
 
-The cipher_name argument selects one of three outer ciphers: "aescmac"
-(AES-128-CTR — 16-byte key + 16-byte nonce, AES-NI accelerated),
-"chacha20" (ChaCha20 (RFC8439) — 32-byte key + 12-byte nonce), or
-"siphash24" (SipHash-2-4 in CTR mode — 16-byte key + 16-byte nonce,
-custom CTR construction over the SipHash-2-4 PRF).
+The cipher_name argument selects one of nine PRF-grade outer ciphers:
+"areion256" (Areion-SoEM-256 in CTR mode), "areion512"
+(Areion-SoEM-512 in CTR mode), "siphash24" (SipHash-2-4 in CTR mode —
+custom CTR construction over the SipHash-2-4 PRF), "aescmac"
+(AES-128-CTR — AES-NI accelerated), "blake2b256" (BLAKE2b-256 in CTR
+mode), "blake2b512" (BLAKE2b-512 in CTR mode), "blake2s" (BLAKE2s in
+CTR mode), "blake3" (BLAKE3 in CTR mode), or "chacha20"
+(ChaCha20 (RFC8439)). Each name routes through the ctr/ package, so
+key and nonce sizes follow the underlying primitive; use
+:func:`key_size` / :func:`nonce_size` to query them.
 
 Threading. Each :class:`WrapStreamWriter` / :class:`UnwrapStreamReader`
 instance owns one libitb stream handle and is single-writer by
@@ -72,13 +79,31 @@ from ._ffi import (
 )
 
 # Canonical outer cipher names accepted by the wrap surface. Match
-# the ``CipherAES128CTR`` / ``CipherChaCha20`` / ``CipherSipHash24``
-# constants in github.com/everanium/itb/wrapper.
-CIPHER_AES128_CTR = "aescmac"
-CIPHER_CHACHA20 = "chacha20"
+# the ``CipherAreion256`` / ``CipherAreion512`` / ``CipherSipHash24`` /
+# ``CipherAES128CTR`` / ``CipherBLAKE2b256`` / ``CipherBLAKE2b512`` /
+# ``CipherBLAKE2s`` / ``CipherBLAKE3`` / ``CipherChaCha20`` constants in
+# github.com/everanium/itb/wrapper.
+CIPHER_AREION256 = "areion256"
+CIPHER_AREION512 = "areion512"
 CIPHER_SIPHASH24 = "siphash24"
+CIPHER_AES128_CTR = "aescmac"
+CIPHER_BLAKE2B256 = "blake2b256"
+CIPHER_BLAKE2B512 = "blake2b512"
+CIPHER_BLAKE2S = "blake2s"
+CIPHER_BLAKE3 = "blake3"
+CIPHER_CHACHA20 = "chacha20"
 
-CIPHER_NAMES = (CIPHER_AES128_CTR, CIPHER_CHACHA20, CIPHER_SIPHASH24)
+CIPHER_NAMES = (
+    CIPHER_AREION256,
+    CIPHER_AREION512,
+    CIPHER_SIPHASH24,
+    CIPHER_AES128_CTR,
+    CIPHER_BLAKE2B256,
+    CIPHER_BLAKE2B512,
+    CIPHER_BLAKE2S,
+    CIPHER_BLAKE3,
+    CIPHER_CHACHA20,
+)
 
 
 class WrapperError(ITBError):
@@ -91,8 +116,9 @@ class WrapperError(ITBError):
 
 
 class InvalidCipherError(WrapperError):
-    """Raised when ``cipher_name`` is not one of "aescmac" / "chacha20" /
-    "siphash24". Carries :data:`itb.STATUS_BAD_INPUT`."""
+    """Raised when ``cipher_name`` is not one of the nine PRF-grade
+    outer cipher names in :data:`CIPHER_NAMES`. Carries
+    :data:`itb.STATUS_BAD_INPUT`."""
 
     def __init__(self, cipher_name: str):
         super().__init__(
@@ -142,9 +168,10 @@ def _raise_wrapper(code: int) -> None:
 
 def key_size(cipher_name: str) -> int:
     """Returns the byte length of the keystream-cipher key for the
-    named outer cipher (16 / 32 / 16 for "aescmac" / "chacha20" /
-    "siphash24"). Raises :class:`InvalidCipherError` for any other
-    name."""
+    named outer cipher. ``cipher_name`` must be one of the nine
+    PRF-grade names in :data:`CIPHER_NAMES`; the key length follows the
+    underlying primitive. Raises :class:`InvalidCipherError` for any
+    other name."""
     cn = _validate_cipher_name(cipher_name)
     out = _ffi.new("size_t*")
     rc = _lib.ITB_WrapperKeySize(cn, out)
@@ -155,8 +182,9 @@ def key_size(cipher_name: str) -> int:
 
 def nonce_size(cipher_name: str) -> int:
     """Returns the on-wire nonce length the named outer cipher emits
-    per stream (16 / 12 / 16 for "aescmac" / "chacha20" / "siphash24").
-    Raises :class:`InvalidCipherError` for any other name."""
+    per stream. ``cipher_name`` must be one of the nine PRF-grade names
+    in :data:`CIPHER_NAMES`; the nonce length follows the underlying
+    primitive. Raises :class:`InvalidCipherError` for any other name."""
     cn = _validate_cipher_name(cipher_name)
     out = _ffi.new("size_t*")
     rc = _lib.ITB_WrapperNonceSize(cn, out)
@@ -167,10 +195,10 @@ def nonce_size(cipher_name: str) -> int:
 
 def generate_key(cipher_name: str) -> bytes:
     """Returns a fresh CSPRNG key of the size required by
-    ``cipher_name`` (16 / 32 / 16 bytes for "aescmac" / "chacha20" /
-    "siphash24"). Uses Python's :func:`secrets.token_bytes`. The
-    returned key is opaque bytes; the caller stores or shares it
-    out-of-band.
+    ``cipher_name`` (one of the nine PRF-grade names in
+    :data:`CIPHER_NAMES`; the size follows the underlying primitive).
+    Uses Python's :func:`secrets.token_bytes`. The returned key is
+    opaque bytes; the caller stores or shares it out-of-band.
     """
     return secrets.token_bytes(key_size(cipher_name))
 
@@ -180,20 +208,15 @@ def derive_key(cipher_name: str, master: bytes) -> bytes:
     from a caller-supplied ``master`` secret (e.g. an ML-KEM shared
     secret). The result is a deterministic function of
     ``(cipher_name, master)``, so both endpoints derive the same key
-    from a shared master. ``master`` must be at least
-    ``key_size(cipher_name)`` bytes; returns the derived key as
-    ``bytes`` of length ``key_size(cipher_name)`` (16 / 32 / 16 for
-    "aescmac" / "chacha20" / "siphash24"). Raises
+    from a shared master. ``master`` must be at least 32 bytes (the
+    wrapper's uniform security floor); returns the derived key as
+    ``bytes`` of length ``key_size(cipher_name)``. ``cipher_name`` must
+    be one of the nine PRF-grade names in :data:`CIPHER_NAMES`. Raises
     :class:`InvalidCipherError` for an unknown name and
     :class:`InvalidKeyError` for a too-short master."""
     cn = _validate_cipher_name(cipher_name)
     master_b = _bytes_view(master)
     klen = key_size(cipher_name)
-    if len(master_b) < klen:
-        raise InvalidKeyError(
-            STATUS_BAD_INPUT,
-            f"{cipher_name!r}: master must be at least {klen} bytes, got {len(master_b)}",
-        )
     out_buf = _ffi.new("unsigned char[]", klen)
     out_len = _ffi.new("size_t*")
     rc = _lib.ITB_WrapperDeriveKey(
@@ -603,9 +626,15 @@ class UnwrapStreamReader:
 
 
 __all__ = [
-    "CIPHER_AES128_CTR",
-    "CIPHER_CHACHA20",
+    "CIPHER_AREION256",
+    "CIPHER_AREION512",
     "CIPHER_SIPHASH24",
+    "CIPHER_AES128_CTR",
+    "CIPHER_BLAKE2B256",
+    "CIPHER_BLAKE2B512",
+    "CIPHER_BLAKE2S",
+    "CIPHER_BLAKE3",
+    "CIPHER_CHACHA20",
     "CIPHER_NAMES",
     "key_size",
     "nonce_size",

@@ -1272,11 +1272,12 @@ format-deniability outer-cipher surface and is imported on demand
 | `wrapper.key_size(cipher_name: str) -> int` | Wrapper-cipher key size in bytes |
 | `wrapper.nonce_size(cipher_name: str) -> int` | Wire nonce size in bytes |
 | `wrapper.generate_key(cipher_name: str) -> bytes` | CSPRNG-fresh wrapper key |
+| `wrapper.derive_key(cipher_name: str, master) -> bytes` | Deterministic wrapper key from a master secret (>= 32 bytes, e.g. an ML-KEM shared secret) |
 | `wrapper.wrap(cipher_name, key, blob) -> bytes` / `wrapper.unwrap(cipher_name, key, wire) -> bytes` | Single Message Wrap / Unwrap |
 | `wrapper.wrap_in_place(cipher_name, key, buf) -> bytes` / `wrapper.unwrap_in_place(cipher_name, key, wire) -> memoryview` | In-place Wrap / Unwrap |
 | `wrapper.WrapStreamWriter(cipher_name, key)` / `wrapper.UnwrapStreamReader(cipher_name, key, wire_nonce)` | Streaming wrap writer / unwrap reader |
 
-Wrapper cipher names: `aes-128-ctr`, `chacha20`, `siphash24`.
+Wrapper cipher names: `areion256`, `areion512`, `siphash24`, `aescmac`, `blake2b256`, `blake2b512`, `blake2s`, `blake3`, `chacha20`.
 
 ### Error model
 
