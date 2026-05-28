@@ -3,12 +3,12 @@
 
 Coverage mirrors the cross-binding contract for the wrapper surface:
 
-- 9 PRF-grade outer ciphers × 4 Single Message variants (wrap /
+- Every PRF-grade outer cipher × 4 Single Message variants (wrap /
   unwrap / wrap_in_place / unwrap_in_place) — round-trip + nonce
   hygiene.
-- 9 PRF-grade outer ciphers × streaming WrapStreamWriter /
+- Every PRF-grade outer cipher × streaming WrapStreamWriter /
   UnwrapStreamReader multi-chunk round-trip.
-- 9 PRF-grade outer ciphers × cross-FFI parity: Python ``wrapper.wrap`` output
+- Every PRF-grade outer cipher × cross-FFI parity: Python ``wrapper.wrap`` output
   is byte-recovered by the Go-native ``wrapper.Unwrap`` via a
   helper binary (``$ITB_WRAPPER_PARITY_BIN`` — optional; tests skip
   cleanly when the helper is not available).
@@ -39,12 +39,12 @@ from itb._ffi import STATUS_BAD_INPUT, STATUS_BAD_HANDLE  # noqa: E402
 CIPHERS = (
     wrapper.CIPHER_AREION256,
     wrapper.CIPHER_AREION512,
-    wrapper.CIPHER_SIPHASH24,
-    wrapper.CIPHER_AES128_CTR,
     wrapper.CIPHER_BLAKE2B256,
     wrapper.CIPHER_BLAKE2B512,
     wrapper.CIPHER_BLAKE2S,
     wrapper.CIPHER_BLAKE3,
+    wrapper.CIPHER_AES128_CTR,
+    wrapper.CIPHER_SIPHASH24,
     wrapper.CIPHER_CHACHA20,
 )
 
@@ -52,12 +52,12 @@ CIPHERS = (
 EXPECTED_SHAPE = {
     wrapper.CIPHER_AREION256: (32, 16),
     wrapper.CIPHER_AREION512: (64, 16),
-    wrapper.CIPHER_SIPHASH24: (16, 16),
-    wrapper.CIPHER_AES128_CTR: (16, 16),
     wrapper.CIPHER_BLAKE2B256: (32, 16),
     wrapper.CIPHER_BLAKE2B512: (32, 16),
     wrapper.CIPHER_BLAKE2S: (32, 16),
     wrapper.CIPHER_BLAKE3: (32, 16),
+    wrapper.CIPHER_AES128_CTR: (16, 16),
+    wrapper.CIPHER_SIPHASH24: (16, 16),
     wrapper.CIPHER_CHACHA20: (32, 12),
 }
 
@@ -69,12 +69,12 @@ class TestWrapperConstants(unittest.TestCase):
             (
                 wrapper.CIPHER_AREION256,
                 wrapper.CIPHER_AREION512,
-                wrapper.CIPHER_SIPHASH24,
-                wrapper.CIPHER_AES128_CTR,
                 wrapper.CIPHER_BLAKE2B256,
                 wrapper.CIPHER_BLAKE2B512,
                 wrapper.CIPHER_BLAKE2S,
                 wrapper.CIPHER_BLAKE3,
+                wrapper.CIPHER_AES128_CTR,
+                wrapper.CIPHER_SIPHASH24,
                 wrapper.CIPHER_CHACHA20,
             ),
         )

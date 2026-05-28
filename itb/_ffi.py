@@ -237,6 +237,8 @@ extern int ITB_SetBitSoup(int mode);
 extern int ITB_GetBitSoup(void);
 extern int ITB_SetLockSoup(int mode);
 extern int ITB_GetLockSoup(void);
+extern int ITB_SetLockBatch(int mode);
+extern int ITB_GetLockBatch(void);
 extern int ITB_SetMaxWorkers(int n);
 extern int ITB_GetMaxWorkers(void);
 extern int ITB_SetNonceBits(int n);
@@ -295,6 +297,7 @@ extern int ITB_Easy_SetNonceBits(uintptr_t handle, int n);
 extern int ITB_Easy_SetBarrierFill(uintptr_t handle, int n);
 extern int ITB_Easy_SetBitSoup(uintptr_t handle, int mode);
 extern int ITB_Easy_SetLockSoup(uintptr_t handle, int mode);
+extern int ITB_Easy_SetLockBatch(uintptr_t handle, int mode);
 extern int ITB_Easy_SetLockSeed(uintptr_t handle, int mode);
 extern int ITB_Easy_SetChunkSize(uintptr_t handle, int n);
 
@@ -526,8 +529,7 @@ extern int ITB_Easy_DecryptStreamAuth(
 /* Format-deniability wrapper (outer CTR cipher). Mirrors the
  * 12 entry points exported by cmd/cshared/main.go for the
  * github.com/everanium/itb/wrapper Go package. The cipher_name
- * argument selects one of three outer keystream ciphers
- * ("aescmac" / "chacha20" / "siphash24"). */
+ * argument selects one of outer keystream ciphers */
 
 extern int ITB_WrapperKeySize(char* cipherName, size_t* outSize);
 extern int ITB_WrapperNonceSize(char* cipherName, size_t* outSize);
@@ -769,6 +771,20 @@ def get_lock_soup() -> int:
     return int(_lib.ITB_GetLockSoup())
 
 
+def set_lock_batch(mode: int) -> None:
+    """0 = off (default); non-zero = on. Process-global. Per-chunk PRF
+    batching for the Lock Soup overlay; same lifecycle rules as
+    :func:`set_lock_soup`; inert unless Lock Soup is engaged."""
+    rc = _lib.ITB_SetLockBatch(int(mode))
+    if rc != STATUS_OK:
+        _raise(rc)
+
+
+def get_lock_batch() -> int:
+    """Returns the current process-global Lock Batch mode (0 / non-zero)."""
+    return int(_lib.ITB_GetLockBatch())
+
+
 def set_max_workers(n: int) -> None:
     """Cap the libitb worker pool to ``n`` CPUs (0 = all CPUs, the default). Process-global."""
     rc = _lib.ITB_SetMaxWorkers(int(n))
@@ -930,10 +946,8 @@ class Seed:
 
         ``components`` accepts any iterable of int (length 8..32,
         multiple of 8). ``hash_key`` length, when non-empty, must
-        match the primitive's native fixed-key size: 16 (aescmac),
-        32 (areion256 / blake2{s,b256} / blake3 / chacha20),
-        64 (areion512 / blake2b512). Pass ``b""`` for ``siphash24``
-        (no internal fixed key)."""
+        match the primitive's native fixed-key size. Pass ``b""``
+        for ``siphash24`` (no internal fixed key)."""
         comps = list(components)
         comps_arr = _ffi.new("unsigned long long[]", comps)
         if len(hash_key) > 0:

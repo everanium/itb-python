@@ -8,7 +8,7 @@
 #   Pass 3: Single Ouroboros, ITB_LOCKSEED=1
 #   Pass 4: Triple Ouroboros, ITB_LOCKSEED=1
 #
-# Each pass walks the 9 PRF-grade primitives plus one Mixed variant
+# Each pass walks the PRF-grade primitives plus one Mixed variant
 # and converges per case via the in-process Go-bench-style harness.
 # Total wall-clock at the default 5-second per-case budget is about
 # 30-40 minutes.

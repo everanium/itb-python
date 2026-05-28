@@ -29,24 +29,24 @@ import itb  # noqa: E402
 CANONICAL_HASHES = [
     ("areion256", 256),
     ("areion512", 512),
-    ("siphash24", 128),
-    ("aescmac", 128),
     ("blake2b256", 256),
     ("blake2b512", 512),
     ("blake2s", 256),
     ("blake3", 256),
+    ("aescmac", 128),
+    ("siphash24", 128),
     ("chacha20", 256),
 ]
 
 EXPECTED_HASH_KEY_LEN = {
     "areion256": 32,
     "areion512": 64,
-    "siphash24": 0,  # no internal fixed key — keyed by seed components
-    "aescmac": 16,
     "blake2b256": 32,
     "blake2b512": 64,
     "blake2s": 32,
     "blake3": 32,
+    "aescmac": 16,
+    "siphash24": 0,  # no internal fixed key — keyed by seed components
     "chacha20": 32,
 }
 

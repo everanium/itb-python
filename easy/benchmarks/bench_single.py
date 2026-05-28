@@ -1,15 +1,18 @@
 """Easy Mode Single-Ouroboros benchmarks for the Python binding.
 
-Mirrors the BenchmarkSingle* cohort from itb_ext_test.go for the
-nine PRF-grade primitives, locked at 1024-bit ITB key width and 16
+Mirrors the BenchmarkSingle* cohort from itb_ext_test.go for
+PRF-grade primitives, locked at 1024-bit ITB key width and 16
 MiB CSPRNG-filled payload. One mixed-primitive variant
-(:meth:`itb.Encryptor.mixed_single` with BLAKE3 / BLAKE2s /
-BLAKE2b-256 + Areion-SoEM-256 dedicated lockSeed) covers the
+(:meth:`itb.Encryptor.mixed_single` + dedicated lockSeed) covers the
 Easy Mode Mixed surface alongside the single-primitive grid.
 
 Run with::
 
     python -m bindings.python.easy.benchmarks.bench_single
+
+    ITB_NONCE_BITS=512 \
+    ITB_LOCKSEED=1 ITB_LOCKBATCH=1 \
+        python -m bindings.python.easy.benchmarks.bench_single
 
     ITB_NONCE_BITS=512 \
     ITB_LOCKSEED=1 \
@@ -36,10 +39,7 @@ import itb
 from . import _common
 
 
-# Canonical 9-primitive PRF-grade order from CLAUDE.md (positions
-# 4 through 12). The three below-spec lab primitives (CRC128,
-# FNV-1a, MD5) are not exposed through the libitb registry and are
-# therefore absent here by construction.
+# Canonical primitive PRF-grade order.
 PRIMITIVES_CANONICAL: List[str] = [
     "areion256",
     "areion512",
@@ -54,7 +54,7 @@ PRIMITIVES_CANONICAL: List[str] = [
 
 # Mixed-primitive composition used by the bench_single_mixed_*
 # cases. noise / data / start cycle through the BLAKE family while
-# Areion-SoEM-256 takes the dedicated lockSeed slot — every name
+# Areion takes the dedicated lockSeed slot — every name
 # resolves to a 256-bit native hash width so the
 # Encryptor.mixed_single width-check passes.
 MIXED_NOISE = "blake3"
@@ -71,9 +71,12 @@ def _apply_lockseed_if_requested(enc: itb.Encryptor) -> None:
     """When ``ITB_LOCKSEED`` is set the harness flips the dedicated
     lockSeed channel on every encryptor. Easy Mode auto-couples
     BitSoup + LockSoup as a side effect, so no separate calls are
-    issued."""
+    issued. When ``ITB_LOCKBATCH`` is also set, enable the Lock Batch
+    performance Lock Soup mode on the same encryptor."""
     if _common.env_lock_seed():
         enc.set_lock_seed(1)
+    if _common.env_lock_batch():
+        enc.set_lock_batch(1)
 
 
 def _build_single(primitive: str) -> itb.Encryptor:
@@ -88,7 +91,7 @@ def _build_single(primitive: str) -> itb.Encryptor:
 def _build_mixed_single() -> itb.Encryptor:
     """Construct a mixed-primitive Single-Ouroboros encryptor
     matching the README Quick Start composition (BLAKE3 noise /
-    BLAKE2s data / BLAKE2b-256 start). The dedicated Areion-SoEM-256
+    BLAKE2s data / BLAKE2b-256 start). The dedicated
     lockSeed slot is allocated only when ``ITB_LOCKSEED`` is set, so
     the no-LockSeed bench arm measures the plain mixed-primitive
     cost without the BitSoup + LockSoup auto-couple. The four
@@ -164,27 +167,36 @@ def _make_decrypt_auth_case(name: str, builder: Callable[[], itb.Encryptor]) -> 
     return (name, fn, PAYLOAD_BYTES)
 
 
-def _build_cases() -> List[_common.BenchCase]:
-    """Assemble the full case list: 9 single-primitive entries
-    × 4 ops + 1 mixed entry × 4 ops = 40 cases. Order is
-    primitive-major / op-minor so a filter on a primitive name
-    keeps all four ops grouped together in the output."""
-    cases: List[_common.BenchCase] = []
+def _case_factories() -> List[_common.LazyCase]:
+    """Return a list of (name, factory) pairs covering the full 40-case
+    message suite (single-primitives × 4 ops + 1 mixed × 4 ops) plus
+    the 8 streaming cases. No payload or Encryptor is allocated here;
+    those are deferred until each factory is called."""
+    facs: List[_common.LazyCase] = []
     for prim in PRIMITIVES_CANONICAL:
         builder = (lambda p=prim: _build_single(p))
         base = f"bench_single_{prim}_{KEY_BITS}bit"
-        cases.append(_make_encrypt_case(f"{base}_encrypt_16mb", builder))
-        cases.append(_make_decrypt_case(f"{base}_decrypt_16mb", builder))
-        cases.append(_make_encrypt_auth_case(f"{base}_encrypt_auth_16mb", builder))
-        cases.append(_make_decrypt_auth_case(f"{base}_decrypt_auth_16mb", builder))
+        n = f"{base}_encrypt_16mb"
+        facs.append((n, lambda name=n, b=builder: _make_encrypt_case(name, b)))
+        n = f"{base}_decrypt_16mb"
+        facs.append((n, lambda name=n, b=builder: _make_decrypt_case(name, b)))
+        n = f"{base}_encrypt_auth_16mb"
+        facs.append((n, lambda name=n, b=builder: _make_encrypt_auth_case(name, b)))
+        n = f"{base}_decrypt_auth_16mb"
+        facs.append((n, lambda name=n, b=builder: _make_decrypt_auth_case(name, b)))
 
     base = f"bench_single_mixed_{KEY_BITS}bit"
-    cases.append(_make_encrypt_case(f"{base}_encrypt_16mb", _build_mixed_single))
-    cases.append(_make_decrypt_case(f"{base}_decrypt_16mb", _build_mixed_single))
-    cases.append(_make_encrypt_auth_case(f"{base}_encrypt_auth_16mb", _build_mixed_single))
-    cases.append(_make_decrypt_auth_case(f"{base}_decrypt_auth_16mb", _build_mixed_single))
+    n = f"{base}_encrypt_16mb"
+    facs.append((n, lambda name=n: _make_encrypt_case(name, _build_mixed_single)))
+    n = f"{base}_decrypt_16mb"
+    facs.append((n, lambda name=n: _make_decrypt_case(name, _build_mixed_single)))
+    n = f"{base}_encrypt_auth_16mb"
+    facs.append((n, lambda name=n: _make_encrypt_auth_case(name, _build_mixed_single)))
+    n = f"{base}_decrypt_auth_16mb"
+    facs.append((n, lambda name=n: _make_decrypt_auth_case(name, _build_mixed_single)))
 
-    return cases
+    _append_stream_factories(facs)
+    return facs
 
 
 def main() -> None:
@@ -201,9 +213,7 @@ def main() -> None:
         flush=True,
     )
 
-    cases = _build_cases()
-    cases.extend(_build_stream_cases())
-    _common.run_all(cases)
+    _common.run_lazy(_case_factories())
 
 
 # ─── Streaming benchmarks (Single Ouroboros) ─────────────────────────
@@ -434,30 +444,28 @@ def _make_lowlevel_user_loop_decrypt_case(name: str) -> _common.BenchCase:
     return (name, fn, STREAM_PAYLOAD_BYTES)
 
 
-def _build_stream_cases() -> List[_common.BenchCase]:
-    """Assemble the eight Single-Ouroboros streaming cases. Order is
+def _append_stream_factories(facs: List[_common.LazyCase]) -> None:
+    """Append eight Single-Ouroboros streaming factories to ``facs``. Order is
     (Mode × Variant × Op) — Easy / Low-Level outer, AEAD-IO /
     user-loop middle, encrypt / decrypt inner — so a substring filter
     on the variant name groups the four ops together."""
     base = f"bench_single_{STREAM_PRIMITIVE}_{KEY_BITS}bit"
-    cases: List[_common.BenchCase] = []
-    cases.append(_make_easy_stream_auth_encrypt_case(
-        f"{base}_easy_stream_auth_io_encrypt_64mb"))
-    cases.append(_make_easy_stream_auth_decrypt_case(
-        f"{base}_easy_stream_auth_io_decrypt_64mb"))
-    cases.append(_make_easy_user_loop_encrypt_case(
-        f"{base}_easy_stream_user_loop_encrypt_64mb"))
-    cases.append(_make_easy_user_loop_decrypt_case(
-        f"{base}_easy_stream_user_loop_decrypt_64mb"))
-    cases.append(_make_lowlevel_stream_auth_encrypt_case(
-        f"{base}_lowlevel_stream_auth_io_encrypt_64mb"))
-    cases.append(_make_lowlevel_stream_auth_decrypt_case(
-        f"{base}_lowlevel_stream_auth_io_decrypt_64mb"))
-    cases.append(_make_lowlevel_user_loop_encrypt_case(
-        f"{base}_lowlevel_stream_user_loop_encrypt_64mb"))
-    cases.append(_make_lowlevel_user_loop_decrypt_case(
-        f"{base}_lowlevel_stream_user_loop_decrypt_64mb"))
-    return cases
+    n = f"{base}_easy_stream_auth_io_encrypt_64mb"
+    facs.append((n, lambda name=n: _make_easy_stream_auth_encrypt_case(name)))
+    n = f"{base}_easy_stream_auth_io_decrypt_64mb"
+    facs.append((n, lambda name=n: _make_easy_stream_auth_decrypt_case(name)))
+    n = f"{base}_easy_stream_user_loop_encrypt_64mb"
+    facs.append((n, lambda name=n: _make_easy_user_loop_encrypt_case(name)))
+    n = f"{base}_easy_stream_user_loop_decrypt_64mb"
+    facs.append((n, lambda name=n: _make_easy_user_loop_decrypt_case(name)))
+    n = f"{base}_lowlevel_stream_auth_io_encrypt_64mb"
+    facs.append((n, lambda name=n: _make_lowlevel_stream_auth_encrypt_case(name)))
+    n = f"{base}_lowlevel_stream_auth_io_decrypt_64mb"
+    facs.append((n, lambda name=n: _make_lowlevel_stream_auth_decrypt_case(name)))
+    n = f"{base}_lowlevel_stream_user_loop_encrypt_64mb"
+    facs.append((n, lambda name=n: _make_lowlevel_user_loop_encrypt_case(name)))
+    n = f"{base}_lowlevel_stream_user_loop_decrypt_64mb"
+    facs.append((n, lambda name=n: _make_lowlevel_user_loop_decrypt_case(name)))
 
 
 if __name__ == "__main__":

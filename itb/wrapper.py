@@ -3,10 +3,7 @@
 Python-idiomatic surface over the 12 ``ITB_Wrap*`` / ``ITB_Unwrap*`` /
 ``ITB_WrapStream*`` / ``ITB_UnwrapStream*`` / ``ITB_WrapperKeySize`` /
 ``ITB_WrapperNonceSize`` exports in ``cmd/cshared/main.go``. Wraps an
-ITB ciphertext under one of nine PRF-grade outer keystream ciphers
-(Areion-SoEM-256 / Areion-SoEM-512 / SipHash-2-4 in CTR mode /
-AES-128-CTR / BLAKE2b-256 / BLAKE2b-512 / BLAKE2s / BLAKE3 /
-ChaCha20 (RFC8439)) so the on-wire
+ITB ciphertext under one of PRF-grade outer keystream ciphers, so the on-wire
 bytes carry no ITB-specific format pattern (W / H / container layout
 for Non-AEAD; 32-byte streamID prefix + per-chunk metadata for
 Streaming AEAD). The wrap exists for format-deniability ONLY — ITB
@@ -22,7 +19,7 @@ Quick start (Single Message Wrap / Unwrap):
     >>> recovered = wrapper.unwrap(wrapper.CIPHER_AES128_CTR, key, wire)
     >>> assert recovered == blob
 
-Single Message in-place mutation (zero-allocation steady state):
+Single Message in-place mutation (no output-buffer allocation):
 
     >>> mutable = bytearray(blob)
     >>> nonce = wrapper.wrap_in_place(wrapper.CIPHER_CHACHA20, key, mutable)
@@ -42,14 +39,8 @@ prefixes also XOR through):
     ...     ww.update(b"chunk-2")
     ...     wire = ww.nonce + ww.update(b"...")  # accumulator pattern
 
-The cipher_name argument selects one of nine PRF-grade outer ciphers:
-"areion256" (Areion-SoEM-256 in CTR mode), "areion512"
-(Areion-SoEM-512 in CTR mode), "siphash24" (SipHash-2-4 in CTR mode —
-custom CTR construction over the SipHash-2-4 PRF), "aescmac"
-(AES-128-CTR — AES-NI accelerated), "blake2b256" (BLAKE2b-256 in CTR
-mode), "blake2b512" (BLAKE2b-512 in CTR mode), "blake2s" (BLAKE2s in
-CTR mode), "blake3" (BLAKE3 in CTR mode), or "chacha20"
-(ChaCha20 (RFC8439)). Each name routes through the ctr/ package, so
+The cipher_name argument selects one of PRF-grade outer ciphers.
+Each name routes through the ctr/ package, so
 key and nonce sizes follow the underlying primitive; use
 :func:`key_size` / :func:`nonce_size` to query them.
 
@@ -79,29 +70,26 @@ from ._ffi import (
 )
 
 # Canonical outer cipher names accepted by the wrap surface. Match
-# the ``CipherAreion256`` / ``CipherAreion512`` / ``CipherSipHash24`` /
-# ``CipherAES128CTR`` / ``CipherBLAKE2b256`` / ``CipherBLAKE2b512`` /
-# ``CipherBLAKE2s`` / ``CipherBLAKE3`` / ``CipherChaCha20`` constants in
-# github.com/everanium/itb/wrapper.
+# constants in github.com/everanium/itb/wrapper.
 CIPHER_AREION256 = "areion256"
 CIPHER_AREION512 = "areion512"
-CIPHER_SIPHASH24 = "siphash24"
-CIPHER_AES128_CTR = "aescmac"
 CIPHER_BLAKE2B256 = "blake2b256"
 CIPHER_BLAKE2B512 = "blake2b512"
 CIPHER_BLAKE2S = "blake2s"
 CIPHER_BLAKE3 = "blake3"
+CIPHER_AES128_CTR = "aescmac"
+CIPHER_SIPHASH24 = "siphash24"
 CIPHER_CHACHA20 = "chacha20"
 
 CIPHER_NAMES = (
     CIPHER_AREION256,
     CIPHER_AREION512,
-    CIPHER_SIPHASH24,
-    CIPHER_AES128_CTR,
     CIPHER_BLAKE2B256,
     CIPHER_BLAKE2B512,
     CIPHER_BLAKE2S,
     CIPHER_BLAKE3,
+    CIPHER_AES128_CTR,
+    CIPHER_SIPHASH24,
     CIPHER_CHACHA20,
 )
 
@@ -116,7 +104,7 @@ class WrapperError(ITBError):
 
 
 class InvalidCipherError(WrapperError):
-    """Raised when ``cipher_name`` is not one of the nine PRF-grade
+    """Raised when ``cipher_name`` is not one of PRF-grade
     outer cipher names in :data:`CIPHER_NAMES`. Carries
     :data:`itb.STATUS_BAD_INPUT`."""
 
@@ -168,7 +156,7 @@ def _raise_wrapper(code: int) -> None:
 
 def key_size(cipher_name: str) -> int:
     """Returns the byte length of the keystream-cipher key for the
-    named outer cipher. ``cipher_name`` must be one of the nine
+    named outer cipher. ``cipher_name`` must be one of
     PRF-grade names in :data:`CIPHER_NAMES`; the key length follows the
     underlying primitive. Raises :class:`InvalidCipherError` for any
     other name."""
@@ -182,7 +170,7 @@ def key_size(cipher_name: str) -> int:
 
 def nonce_size(cipher_name: str) -> int:
     """Returns the on-wire nonce length the named outer cipher emits
-    per stream. ``cipher_name`` must be one of the nine PRF-grade names
+    per stream. ``cipher_name`` must be one of PRF-grade names
     in :data:`CIPHER_NAMES`; the nonce length follows the underlying
     primitive. Raises :class:`InvalidCipherError` for any other name."""
     cn = _validate_cipher_name(cipher_name)
@@ -195,7 +183,7 @@ def nonce_size(cipher_name: str) -> int:
 
 def generate_key(cipher_name: str) -> bytes:
     """Returns a fresh CSPRNG key of the size required by
-    ``cipher_name`` (one of the nine PRF-grade names in
+    ``cipher_name`` (one of PRF-grade names in
     :data:`CIPHER_NAMES`; the size follows the underlying primitive).
     Uses Python's :func:`secrets.token_bytes`. The returned key is
     opaque bytes; the caller stores or shares it out-of-band.
@@ -211,7 +199,7 @@ def derive_key(cipher_name: str, master: bytes) -> bytes:
     from a shared master. ``master`` must be at least 32 bytes (the
     wrapper's uniform security floor); returns the derived key as
     ``bytes`` of length ``key_size(cipher_name)``. ``cipher_name`` must
-    be one of the nine PRF-grade names in :data:`CIPHER_NAMES`. Raises
+    be one of PRF-grade names in :data:`CIPHER_NAMES`. Raises
     :class:`InvalidCipherError` for an unknown name and
     :class:`InvalidKeyError` for a too-short master."""
     cn = _validate_cipher_name(cipher_name)
@@ -235,8 +223,8 @@ def wrap(cipher_name: str, key: bytes, blob: bytes) -> bytes:
     ``nonce || keystream-XOR(blob)``.
 
     Allocates a fresh output buffer of size
-    ``nonce_size(cipher_name) + len(blob)`` per call. For zero-
-    allocation steady state on the hot path use :func:`wrap_in_place`.
+    ``nonce_size(cipher_name) + len(blob)`` per call. For no output-buffer
+    allocation on the hot path use :func:`wrap_in_place`.
     """
     cn = _validate_cipher_name(cipher_name)
     key_b = _bytes_view(key)
@@ -267,8 +255,8 @@ def unwrap(cipher_name: str, key: bytes, wire: bytes) -> bytes:
     remainder under ``(key, nonce)`` and returns the recovered blob.
 
     Allocates a fresh output buffer of size
-    ``len(wire) - nonce_size(cipher_name)`` per call. For zero-
-    allocation steady state use :func:`unwrap_in_place`.
+    ``len(wire) - nonce_size(cipher_name)`` per call. For no output-buffer
+    allocation use :func:`unwrap_in_place`.
     """
     cn = _validate_cipher_name(cipher_name)
     key_b = _bytes_view(key)
@@ -628,12 +616,12 @@ class UnwrapStreamReader:
 __all__ = [
     "CIPHER_AREION256",
     "CIPHER_AREION512",
-    "CIPHER_SIPHASH24",
-    "CIPHER_AES128_CTR",
     "CIPHER_BLAKE2B256",
     "CIPHER_BLAKE2B512",
     "CIPHER_BLAKE2S",
     "CIPHER_BLAKE3",
+    "CIPHER_AES128_CTR",
+    "CIPHER_SIPHASH24",
     "CIPHER_CHACHA20",
     "CIPHER_NAMES",
     "key_size",

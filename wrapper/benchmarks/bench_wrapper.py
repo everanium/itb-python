@@ -5,13 +5,15 @@ for the Python binding asymmetry: the Streaming No MAC arm covers
 only the User-Driven Loop variant (the binding does not expose a
 file-like Streaming No MAC writer / reader pair).
 
-Total sub-bench count: **102**.
+The outer-cipher palette covers every cipher in
+PRIMITIVES_CANONICAL order (areion256, areion512, blake2b256,
+blake2b512, blake2s, blake3, aescmac, siphash24, chacha20):
 
-  - Wrapper Only round-trip (16 MiB blob)              :  6  ( 3 ciphers × 2 variants {Wrap, WrapInPlace} )
-  - Message Single — 4 modes × 3 ciphers × 2 dirs      : 24
-  - Message Triple — 4 modes × 3 ciphers × 2 dirs      : 24
-  - Streaming Single — 4 modes × 3 ciphers × 2 dirs    : 24
-  - Streaming Triple — 4 modes × 3 ciphers × 2 dirs    : 24
+  - Wrapper Only round-trip (16 MiB blob)              : 2 variants {Wrap, WrapInPlace} per cipher
+  - Message Single — 4 modes × 2 dirs per cipher
+  - Message Triple — 4 modes × 2 dirs per cipher
+  - Streaming Single — 4 modes × 2 dirs per cipher
+  - Streaming Triple — 4 modes × 2 dirs per cipher
 
 The 4 streaming modes are:
 
@@ -56,10 +58,19 @@ from . import _common
 # Configuration
 # --------------------------------------------------------------------
 
+# Full outer-keystream palette in PRIMITIVES_CANONICAL order
+# (areion256, areion512, blake2b256, blake2b512, blake2s, blake3,
+# aescmac, siphash24, chacha20).
 CIPHERS: Tuple[str, ...] = (
+    wrapper.CIPHER_AREION256,
+    wrapper.CIPHER_AREION512,
+    wrapper.CIPHER_BLAKE2B256,
+    wrapper.CIPHER_BLAKE2B512,
+    wrapper.CIPHER_BLAKE2S,
+    wrapper.CIPHER_BLAKE3,
     wrapper.CIPHER_AES128_CTR,
-    wrapper.CIPHER_CHACHA20,
     wrapper.CIPHER_SIPHASH24,
+    wrapper.CIPHER_CHACHA20,
 )
 
 PRIMITIVE = "areion512"
@@ -108,14 +119,6 @@ def _make_wrapper_only_inplace_case(cipher_name: str) -> _common.BenchCase:
             _ = wrapper.unwrap_in_place(cipher_name, key, wire)
 
     return (name, fn, WRAPPER_PAYLOAD_BYTES)
-
-
-def _build_wrapper_only_cases() -> List[_common.BenchCase]:
-    cases: List[_common.BenchCase] = []
-    for cn in CIPHERS:
-        cases.append(_make_wrapper_only_wrap_case(cn))
-        cases.append(_make_wrapper_only_inplace_case(cn))
-    return cases
 
 
 # --------------------------------------------------------------------
@@ -181,24 +184,6 @@ def _make_message_decrypt_case(
             _ = enc.decrypt_auth(recovered) if auth else enc.decrypt(recovered)
 
     return (name, fn, MESSAGE_PAYLOAD_BYTES)
-
-
-def _build_message_cases(mode: int) -> List[_common.BenchCase]:
-    """Build the 24 message sub-benches for one mode (Single = mode 1
-    or Triple = mode 3). Order is (mode/cipher/direction)."""
-    mode_name = "single" if mode == 1 else "triple"
-    labels = [
-        ("easy-nomac", lambda: _new_easy_encryptor(mode, with_mac=False), False),
-        ("easy-auth", lambda: _new_easy_encryptor(mode, with_mac=True), True),
-        ("lowlevel-nomac", lambda: _new_easy_encryptor(mode, with_mac=False), False),
-        ("lowlevel-auth", lambda: _new_easy_encryptor(mode, with_mac=True), True),
-    ]
-    cases: List[_common.BenchCase] = []
-    for label, factory, auth in labels:
-        for cipher_name in CIPHERS:
-            cases.append(_make_message_encrypt_case(label, mode_name, cipher_name, factory, auth))
-            cases.append(_make_message_decrypt_case(label, mode_name, cipher_name, factory, auth))
-    return cases
 
 
 # --------------------------------------------------------------------
@@ -393,49 +378,127 @@ def _make_stream_userloop_decrypt_case(
     return (name, fn, STREAM_PAYLOAD_BYTES)
 
 
-def _build_streaming_cases(mode: int) -> List[_common.BenchCase]:
-    """Build the 24 streaming sub-benches for one mode."""
-    cases: List[_common.BenchCase] = []
-    aead_labels = ("aead-easy-io", "aead-lowlevel-io")
-    userloop_labels = ("noaead-easy-userloop", "noaead-lowlevel-userloop")
-
-    for label in aead_labels:
-        for cn in CIPHERS:
-            cases.append(_make_stream_aead_io_encrypt_case(label, mode, cn))
-            cases.append(_make_stream_aead_io_decrypt_case(label, mode, cn))
-
-    for label in userloop_labels:
-        for cn in CIPHERS:
-            cases.append(_make_stream_userloop_encrypt_case(label, mode, cn))
-            cases.append(_make_stream_userloop_decrypt_case(label, mode, cn))
-
-    return cases
-
-
 # --------------------------------------------------------------------
 # Driver
 # --------------------------------------------------------------------
 
 
-def _build_all_cases() -> List[_common.BenchCase]:
-    cases: List[_common.BenchCase] = []
-    cases.extend(_build_wrapper_only_cases())
-    cases.extend(_build_message_cases(mode=1))
-    cases.extend(_build_message_cases(mode=3))
-    cases.extend(_build_streaming_cases(mode=1))
-    cases.extend(_build_streaming_cases(mode=3))
-    return cases
+def _lazy_cases() -> List[_common.LazyCase]:
+    """Return (name, factory) pairs for every wrapper bench case.
+
+    Factories are plain callables; each allocates its 16–64 MiB payload
+    only when invoked. Building all factories is cheap (no large
+    allocations); peak RSS is bounded to one case at a time.
+    """
+    lazy: List[_common.LazyCase] = []
+
+    # Wrapper Only — 2 cases per cipher.
+    for cn in CIPHERS:
+        lazy.append((
+            f"BenchmarkWrapperOnlyWrap/{cn}",
+            lambda _cn=cn: _make_wrapper_only_wrap_case(_cn),
+        ))
+        lazy.append((
+            f"BenchmarkWrapperOnlyInPlace/{cn}",
+            lambda _cn=cn: _make_wrapper_only_inplace_case(_cn),
+        ))
+
+    # Message Single — 4 modes × 2 dirs per cipher.
+    mode_defs = [
+        ("easy-nomac", lambda: _new_easy_encryptor(1, with_mac=False), False),
+        ("easy-auth",  lambda: _new_easy_encryptor(1, with_mac=True),  True),
+        ("lowlevel-nomac", lambda: _new_easy_encryptor(1, with_mac=False), False),
+        ("lowlevel-auth",  lambda: _new_easy_encryptor(1, with_mac=True),  True),
+    ]
+    for label, _factory, auth in mode_defs:
+        for cn in CIPHERS:
+            lazy.append((
+                f"BenchmarkMessageSingle/{label}/{cn}/encrypt",
+                lambda _label=label, _cn=cn, _auth=auth: _make_message_encrypt_case(
+                    _label, "single", _cn, lambda: _new_easy_encryptor(1, with_mac=_auth), _auth),
+            ))
+            lazy.append((
+                f"BenchmarkMessageSingle/{label}/{cn}/decrypt",
+                lambda _label=label, _cn=cn, _auth=auth: _make_message_decrypt_case(
+                    _label, "single", _cn, lambda: _new_easy_encryptor(1, with_mac=_auth), _auth),
+            ))
+
+    # Message Triple — 4 modes × 2 dirs per cipher.
+    mode_defs_t = [
+        ("easy-nomac",    False),
+        ("easy-auth",     True),
+        ("lowlevel-nomac", False),
+        ("lowlevel-auth",  True),
+    ]
+    for label, auth in mode_defs_t:
+        for cn in CIPHERS:
+            lazy.append((
+                f"BenchmarkMessageTriple/{label}/{cn}/encrypt",
+                lambda _label=label, _cn=cn, _auth=auth: _make_message_encrypt_case(
+                    _label, "triple", _cn, lambda: _new_easy_encryptor(3, with_mac=_auth), _auth),
+            ))
+            lazy.append((
+                f"BenchmarkMessageTriple/{label}/{cn}/decrypt",
+                lambda _label=label, _cn=cn, _auth=auth: _make_message_decrypt_case(
+                    _label, "triple", _cn, lambda: _new_easy_encryptor(3, with_mac=_auth), _auth),
+            ))
+
+    # Streaming Single — 4 modes × 2 dirs per cipher.
+    for label in ("aead-easy-io", "aead-lowlevel-io"):
+        for cn in CIPHERS:
+            lazy.append((
+                f"BenchmarkStreamingSingle/{label}/{cn}/encrypt",
+                lambda _label=label, _cn=cn: _make_stream_aead_io_encrypt_case(_label, 1, _cn),
+            ))
+            lazy.append((
+                f"BenchmarkStreamingSingle/{label}/{cn}/decrypt",
+                lambda _label=label, _cn=cn: _make_stream_aead_io_decrypt_case(_label, 1, _cn),
+            ))
+    for label in ("noaead-easy-userloop", "noaead-lowlevel-userloop"):
+        for cn in CIPHERS:
+            lazy.append((
+                f"BenchmarkStreamingSingle/{label}/{cn}/encrypt",
+                lambda _label=label, _cn=cn: _make_stream_userloop_encrypt_case(_label, 1, _cn),
+            ))
+            lazy.append((
+                f"BenchmarkStreamingSingle/{label}/{cn}/decrypt",
+                lambda _label=label, _cn=cn: _make_stream_userloop_decrypt_case(_label, 1, _cn),
+            ))
+
+    # Streaming Triple — 4 modes × 2 dirs per cipher.
+    for label in ("aead-easy-io", "aead-lowlevel-io"):
+        for cn in CIPHERS:
+            lazy.append((
+                f"BenchmarkStreamingTriple/{label}/{cn}/encrypt",
+                lambda _label=label, _cn=cn: _make_stream_aead_io_encrypt_case(_label, 3, _cn),
+            ))
+            lazy.append((
+                f"BenchmarkStreamingTriple/{label}/{cn}/decrypt",
+                lambda _label=label, _cn=cn: _make_stream_aead_io_decrypt_case(_label, 3, _cn),
+            ))
+    for label in ("noaead-easy-userloop", "noaead-lowlevel-userloop"):
+        for cn in CIPHERS:
+            lazy.append((
+                f"BenchmarkStreamingTriple/{label}/{cn}/encrypt",
+                lambda _label=label, _cn=cn: _make_stream_userloop_encrypt_case(_label, 3, _cn),
+            ))
+            lazy.append((
+                f"BenchmarkStreamingTriple/{label}/{cn}/decrypt",
+                lambda _label=label, _cn=cn: _make_stream_userloop_decrypt_case(_label, 3, _cn),
+            ))
+
+    return lazy
 
 
 def main() -> None:
     itb.set_max_workers(0)
-    cases = _build_all_cases()
+    lazy = _lazy_cases()
     print(
         f"# wrapper bench primitives={PRIMITIVE} key_bits={KEY_BITS} "
-        f"mac={MAC_NAME} ciphers={CIPHERS} cases={len(cases)}",
+        f"mac={MAC_NAME} ciphers={CIPHERS} cases={len(lazy)}",
         flush=True,
     )
-    _common.run_all(cases)
+    _common.run_lazy(lazy)
 
 
 if __name__ == "__main__":

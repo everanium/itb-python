@@ -83,7 +83,7 @@ chunked I/O, error paths, lockSeed lifecycle.
 
 A custom Go-bench-style harness lives under `easy/benchmarks/`
 and covers the four ops (`encrypt`, `decrypt`, `encrypt_auth`,
-`decrypt_auth`) across the nine PRF-grade primitives plus one
+`decrypt_auth`) across PRF-grade primitives plus one
 mixed-primitive variant for both Single and Triple Ouroboros at
 1024-bit ITB key width and 16 MiB payload. See
 [`easy/benchmarks/README.md`](easy/benchmarks/README.md) for
@@ -356,6 +356,11 @@ with itb.Encryptor("areion512", 2048, "hmac-blake3") as enc:
     enc.set_lock_soup(1)      # optional Insane Interlocked Mode: per-chunk PRF-keyed
                               # bit-permutation overlay on top of bit-soup;
                               # auto-enabled for Single Ouroboros if set_bit_soup(1) is on
+    enc.set_lock_batch(1)     # Lock Batch is the performance Lock Soup mode: recommended
+                              # in every case when the configured hash is PRF-grade, since
+                              # security is preserved under the PRF assumption while
+                              # throughput rises. Symmetric option — set identically on
+                              # the encrypt and decrypt sides.
 
     #enc.set_lock_seed(1)     # optional dedicated lockSeed for the bit-permutation
                               # derivation channel — separates that PRF's keying material
@@ -434,12 +439,13 @@ with itb.Encryptor(prim, key_bits, mac, mode=mode) as dec:
     dec.set_barrier_fill(4)
     dec.set_bit_soup(1)
     dec.set_lock_soup(1)
+    dec.set_lock_batch(1)     # Recommended under the PRF assumption — the performance Lock Soup mode; symmetric, set on both sides.
     #dec.set_lock_seed(1)     # optional — Import below restores the dedicated
                               # lockSeed slot from the blob's lock_seed:true.
 
     # Restore PRF keys, seed components, MAC key, and the per-instance
     # configuration overrides (nonce_bits / barrier_fill / bit_soup /
-    # lock_soup / lock_seed) from the saved blob.
+    # lock_soup / lock_batch / lock_seed) from the saved blob.
     dec.import_state(blob)
 
     #read_size = 64 * 1024  # app-driven feed granularity
@@ -500,6 +506,7 @@ with itb.Encryptor("areion512", 2048, "hmac-blake3") as enc:
     enc.set_barrier_fill(4)
     enc.set_bit_soup(1)
     enc.set_lock_soup(1)
+    enc.set_lock_batch(1)     # Recommended under the PRF assumption — the performance Lock Soup mode; symmetric, set on both sides.
 
     #enc.set_lock_seed(1)     # optional dedicated lockSeed for the bit-permutation
                               # derivation channel — auto-couples set_lock_soup(1) +
@@ -572,6 +579,7 @@ with itb.Encryptor(prim, key_bits, mac, mode=mode) as dec:
     dec.set_barrier_fill(4)
     dec.set_bit_soup(1)
     dec.set_lock_soup(1)
+    dec.set_lock_batch(1)     # Recommended under the PRF assumption — the performance Lock Soup mode; symmetric, set on both sides.
     #dec.set_lock_seed(1)     # optional — Import below restores the dedicated
                               # lockSeed slot from the blob's lock_seed:true.
 
@@ -755,6 +763,11 @@ itb.set_lock_soup(1)          # optional Insane Interlocked Mode: per-chunk PRF-
                               # bit-permutation overlay on top of bit-soup;
                               # automatically enabled for Single Ouroboros if
                               # itb.set_bit_soup(1) is enabled or vice versa
+itb.set_lock_batch(1)         # Lock Batch is the performance Lock Soup mode: recommended
+                              # in every case when the configured hash is PRF-grade, since
+                              # security is preserved under the PRF assumption while
+                              # throughput rises. Symmetric option — set identically on
+                              # the encrypt and decrypt sides.
 
 # Three independent CSPRNG-keyed Areion-SoEM-512 seeds. Each Seed
 # pre-keys its primitive once at construction; the C ABI / FFI
@@ -812,7 +825,7 @@ try:
 
     # For cross-process persistence: itb.Blob512 packs every seed's
     # hash key + components and the captured process-wide globals
-    # (nonce_bits / barrier_fill / bit_soup / lock_soup) into one
+    # (nonce_bits / barrier_fill / bit_soup / lock_soup / lock_batch) into one
     # JSON blob — the Sender ships blob_bytes alongside the
     # ciphertext (or out-of-band). The receiver round-trips back
     # to working seeds via Blob512.import_blob below.
@@ -840,9 +853,9 @@ itb.set_max_workers(8)        # deployment knob — not serialised by Blob512
 # wire = ...; blob_bytes = ...
 
 # Blob512.import_blob applies the captured globals (nonce_bits /
-# barrier_fill / bit_soup / lock_soup) via the process-wide setters
+# barrier_fill / bit_soup / lock_soup / lock_batch) via the process-wide setters
 # AND populates per-slot hash keys + components. The Receiver does
-# NOT need to set these four globals manually — the blob is the
+# NOT need to set these globals manually — the blob is the
 # single source of truth for both the encryptor material and the
 # runtime configuration that produced the ciphertext.
 restored = itb.Blob512()
@@ -905,6 +918,11 @@ itb.set_lock_soup(1)          # optional Insane Interlocked Mode: per-chunk PRF-
                               # bit-permutation overlay on top of bit-soup;
                               # automatically enabled for Single Ouroboros if
                               # itb.set_bit_soup(1) is enabled or vice versa
+itb.set_lock_batch(1)         # Lock Batch is the performance Lock Soup mode: recommended
+                              # in every case when the configured hash is PRF-grade, since
+                              # security is preserved under the PRF assumption while
+                              # throughput rises. Symmetric option — set identically on
+                              # the encrypt and decrypt sides.
 
 ns = itb.Seed("areion512", 2048)
 ds = itb.Seed("areion512", 2048)
@@ -999,9 +1017,7 @@ finally:
 
 ## Hash primitives (Single / Triple)
 
-Names match the canonical `hashes/` registry: `areion256`,
-`areion512`, `siphash24`, `aescmac`, `blake2b256`, `blake2b512`,
-`blake2s`, `blake3`, `chacha20`. Triple Ouroboros (3× security)
+Names match the canonical `hashes/` registry. Triple Ouroboros
 takes seven seeds (one shared `noiseSeed` plus three `dataSeed`
 and three `startSeed`) via `itb.encrypt_triple` /
 `itb.decrypt_triple` and the authenticated counterparts
@@ -1038,6 +1054,7 @@ calls in the process. Out-of-range values raise
 | `set_barrier_fill(n)` | 1, 2, 4, 8, 16, 32 | 1 |
 | `set_bit_soup(mode)` | 0 (off), non-zero (on) | 0 |
 | `set_lock_soup(mode)` | 0 (off), non-zero (on) | 0 |
+| `set_lock_batch(mode)` | 0 (off), non-zero (on) | 0 |
 
 Read-only constants: `itb.max_key_bits()`, `itb.channels()`,
 `itb.header_size()`, `itb.version()`.
@@ -1201,6 +1218,7 @@ format-deniability outer-cipher surface and is imported on demand
 |---|---|
 | `itb.set_bit_soup(mode: int)` / `itb.get_bit_soup() -> int` | Bit Soup mode toggle |
 | `itb.set_lock_soup(mode: int)` / `itb.get_lock_soup() -> int` | Lock Soup mode toggle |
+| `itb.set_lock_batch(mode: int)` / `itb.get_lock_batch() -> int` | Lock Batch mode toggle (performance variant of Lock Soup; recommended under the PRF assumption; symmetric; inert unless Lock Soup is engaged) |
 | `itb.set_max_workers(n: int)` / `itb.get_max_workers() -> int` | Worker pool cap |
 | `itb.set_nonce_bits(n: int)` / `itb.get_nonce_bits() -> int` | Nonce width (128 / 256 / 512) |
 | `itb.set_barrier_fill(n: int)` / `itb.get_barrier_fill() -> int` | Barrier-fill factor |
@@ -1235,7 +1253,7 @@ format-deniability outer-cipher surface and is imported on demand
 | `itb.Encryptor.mixed3(primitives, key_bits, mac=None)` | Mixed-primitive Triple Ouroboros |
 | `enc.encrypt(plaintext)` / `enc.decrypt(ciphertext)` | Cipher entry points |
 | `enc.encrypt_auth(plaintext)` / `enc.decrypt_auth(ciphertext)` | MAC-authenticated cipher entry points |
-| `enc.set_nonce_bits / set_barrier_fill / set_bit_soup / set_lock_soup / set_lock_seed / set_chunk_size` | Per-instance setters |
+| `enc.set_nonce_bits / set_barrier_fill / set_bit_soup / set_lock_soup / set_lock_batch / set_lock_seed / set_chunk_size` | Per-instance setters |
 | `enc.primitive / mac_name / key_bits / mode / nonce_bits / header_size / has_prf_keys / is_mixed / seed_count` | Accessors |
 | `enc.prf_key(slot)` / `enc.mac_key()` / `enc.seed_components(slot)` | Key-material accessors |
 | `enc.export()` / `enc.import_state(blob)` | State-blob persistence |
@@ -1277,7 +1295,7 @@ format-deniability outer-cipher surface and is imported on demand
 | `wrapper.wrap_in_place(cipher_name, key, buf) -> bytes` / `wrapper.unwrap_in_place(cipher_name, key, wire) -> memoryview` | In-place Wrap / Unwrap |
 | `wrapper.WrapStreamWriter(cipher_name, key)` / `wrapper.UnwrapStreamReader(cipher_name, key, wire_nonce)` | Streaming wrap writer / unwrap reader |
 
-Wrapper cipher names: `areion256`, `areion512`, `siphash24`, `aescmac`, `blake2b256`, `blake2b512`, `blake2s`, `blake3`, `chacha20`.
+Wrapper cipher names: `areion256`, `areion512`, `blake2b256`, `blake2b512`, `blake2s`, `blake3`, `aescmac`, `siphash24`, `chacha20`.
 
 ### Error model
 

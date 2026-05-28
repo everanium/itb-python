@@ -10,7 +10,7 @@ file-like / stream-like Streaming No MAC writer or reader pair
 User-Driven Loop variant only — caller produces ITB ciphertext per
 chunk via :meth:`itb.Encryptor.encrypt` (or :func:`itb.encrypt`),
 frames ``u32_LE_len || ct`` per chunk, and pushes through the
-wrapper streaming handle. This is intentional — see CLAUDE.md.
+wrapper streaming handle. This is intentional.
 """
 
 __all__ = []

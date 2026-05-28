@@ -14,6 +14,11 @@ extended for Easy Mode):
 * ``ITB_NONCE_BITS`` — process-wide nonce width override; valid
   values 128 / 256 / 512. Maps to :func:`itb.set_nonce_bits` before
   any encryptor is constructed. Default 128.
+* ``ITB_LOCKBATCH`` — non-empty / non-``0`` enables Lock Batch (the
+  performance Lock Soup mode); set with ``ITB_LOCKSEED``. Every Easy
+  Mode encryptor in this run calls
+  :meth:`itb.Encryptor.set_lock_batch(1)`. Inert unless Lock Soup is
+  engaged via ``ITB_LOCKSEED``. Default off.
 * ``ITB_LOCKSEED`` — when set to a non-empty / non-``0`` value, every
   Easy Mode encryptor in this run calls
   :meth:`itb.Encryptor.set_lock_seed(1)`. The Go side's
@@ -23,7 +28,7 @@ extended for Easy Mode):
 
 Worker count defaults to ``itb.set_max_workers(0)`` (auto-detect),
 matching the Go bench default. Bench scripts may override before
-calling :func:`run_all`.
+calling :func:`run_lazy`.
 """
 
 from __future__ import annotations
@@ -50,6 +55,15 @@ def env_nonce_bits(default: int = 128) -> int:
         file=sys.stderr,
     )
     return default
+
+
+def env_lock_batch() -> bool:
+    """``True`` when ``ITB_LOCKBATCH`` is set to a non-empty /
+    non-``0`` value. Triggers :meth:`Encryptor.set_lock_batch(1)` on
+    every encryptor; inert unless Lock Soup is engaged via
+    ``ITB_LOCKSEED``."""
+    v = os.environ.get("ITB_LOCKBATCH", "")
+    return v not in ("", "0")
 
 
 def env_lock_seed() -> bool:
@@ -151,27 +165,50 @@ def _measure(name: str, fn: BenchFn, payload_bytes: int, min_seconds: float) -> 
     )
 
 
-def run_all(cases: List[BenchCase]) -> None:
-    """Run every case in ``cases`` and print one Go-bench-style line
-    per case to stdout. Honours ``ITB_BENCH_FILTER`` for substring
-    scoping and ``ITB_BENCH_MIN_SEC`` for per-case wall-clock
-    budget."""
+# A lazy case is a (name, factory) pair. The factory is called just
+# before measurement and its return value — a BenchCase — is measured
+# then discarded. Peak RSS stays bounded to roughly one case at a time
+# regardless of how many lazy cases are registered.
+LazyCase = Tuple[str, Callable[[], "BenchCase"]]
+
+
+def run_lazy(lazy_cases: List[LazyCase]) -> None:
+    """Run every case in ``lazy_cases`` via the lazy-factory pattern and
+    print one Go-bench-style line per case to stdout. Each factory is
+    called immediately before its case is measured and the result is
+    discarded afterwards, so peak memory stays bounded to one case at a
+    time. Honours ``ITB_BENCH_FILTER`` for substring scoping and
+    ``ITB_BENCH_MIN_SEC`` for per-case wall-clock budget."""
     flt = env_filter()
     min_seconds = env_min_seconds()
 
-    selected = cases if flt is None else [c for c in cases if flt in c[0]]
+    selected = (
+        lazy_cases
+        if flt is None
+        else [(n, f) for (n, f) in lazy_cases if flt in n]
+    )
     if not selected:
         print(
             f"no bench cases match filter {flt!r}; "
-            f"available: {[c[0] for c in cases]}",
+            f"available: {[n for (n, _) in lazy_cases]}",
             file=sys.stderr,
         )
         return
 
+    # Determine payload_bytes from the first selected case by calling its
+    # factory, extracting the field, then running it through the normal
+    # measure path.
+    first_name, first_factory = selected[0]
+    first_case = first_factory()
+    payload_bytes = first_case[2]
+
     print(
-        f"# benchmarks={len(selected)} payload_bytes={selected[0][2]} "
+        f"# benchmarks={len(selected)} payload_bytes={payload_bytes} "
         f"min_seconds={min_seconds}",
         flush=True,
     )
-    for name, fn, payload_bytes in selected:
-        _measure(name, fn, payload_bytes, min_seconds)
+    _measure(first_case[0], first_case[1], first_case[2], min_seconds)
+
+    for name, factory in selected[1:]:
+        case = factory()
+        _measure(case[0], case[1], case[2], min_seconds)

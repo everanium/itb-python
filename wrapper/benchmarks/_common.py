@@ -84,15 +84,33 @@ def _measure(name: str, fn: BenchFn, payload_bytes: int, min_seconds: float) -> 
     )
 
 
-def run_all(cases: List[BenchCase]) -> None:
+# A lazy case descriptor: (name, factory). The factory callable
+# returns a BenchCase when invoked; it is called immediately before
+# timing so peak memory is bounded to one case at a time.
+LazyCase = Tuple[str, Callable[[], BenchCase]]
+
+
+def run_lazy(lazy_cases: List[LazyCase]) -> None:
+    """Run bench cases one at a time, building each just before timing.
+
+    Accepts a list of (name, factory) pairs where ``factory()`` builds
+    the BenchCase on demand. This bounds peak RSS to roughly one case
+    regardless of the total number of cases — the 16–64 MiB payload
+    allocated by ``factory()`` is eligible for collection before the
+    next factory is called.
+    """
     flt = env_filter()
     min_seconds = env_min_seconds()
 
-    selected = cases if flt is None else [c for c in cases if flt in c[0]]
+    all_names = [n for n, _ in lazy_cases]
+    selected = (
+        lazy_cases if flt is None
+        else [(n, f) for n, f in lazy_cases if flt in n]
+    )
     if not selected:
         print(
             f"no bench cases match filter {flt!r}; "
-            f"available: {[c[0] for c in cases]}",
+            f"available: {all_names}",
             file=sys.stderr,
         )
         return
@@ -101,5 +119,6 @@ def run_all(cases: List[BenchCase]) -> None:
         f"# benchmarks={len(selected)} min_seconds={min_seconds}",
         flush=True,
     )
-    for name, fn, payload_bytes in selected:
-        _measure(name, fn, payload_bytes, min_seconds)
+    for name, factory in selected:
+        case_name, fn, payload_bytes = factory()
+        _measure(case_name, fn, payload_bytes, min_seconds)
