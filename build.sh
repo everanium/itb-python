@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 #
 # build.sh -- one-step build for the Python binding's libitb.so
-# dependency. Prerequisites (Go, Python, python-cffi) must be
-# installed separately; see README.md "Prerequisites" section.
+# dependency. Prerequisites (Go, Python 3.10+) must be installed
+# separately; see README.md "Prerequisites" section.
 #
 # Usage:
 #   ./build.sh             # default build (full asm stack)
@@ -28,5 +28,9 @@ echo "==> building libitb.so${TAGS:+ (with ${TAGS[*]})}"
 go build -trimpath "${TAGS[@]}" -buildmode=c-shared \
     -o dist/linux-amd64/libitb.so ./cmd/cshared
 
-echo "==> Python binding loads libitb.so at runtime via cffi; no further build step."
-echo "==> ready: cd bindings/python && python -m unittest discover tests"
+cd "$REPO_ROOT/bindings/python"
+echo "==> compile-checking the itb package"
+python3 -m compileall -q itb tests benches eitb
+
+echo "==> Python binding loads libitb.so at runtime via ctypes; no further build step."
+echo "==> ready: ./run_tests.sh"

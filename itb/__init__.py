@@ -1,234 +1,44 @@
-"""ITB — Python binding over libitb shared library.
+"""Thin Python proxy over the libitb shared library's Triple Pipeline
+surface.
 
-The package wraps the C ABI exported by cmd/cshared (libitb.so / .dll /
-.dylib) through ``cffi`` in ABI mode (no compile step on install). The
-public surface is intentionally narrow:
+The package wraps the ``ITB_Triple_*`` C ABI exported by
+``cmd/cshared`` (libitb.so / .dylib / .dll) through :mod:`ctypes` —
+runtime FFI, no compile-time link, no C compiler at install time.
+Every hash-name / MAC-name / cipher-name / profile-name is an opaque
+string passed through to Go for validation; the binding carries no
+ITB construction logic of its own.
 
-    >>> import itb
-    >>> seeds = [itb.Seed("blake3", 1024) for _ in range(3)]
-    >>> ct = itb.encrypt(*seeds, b"hello world")
-    >>> pt = itb.decrypt(*seeds, ct)
-    >>> assert pt == b"hello world"
+Example::
 
-Authenticated variants take an additional MAC handle:
+    import itb
 
-    >>> mac = itb.MAC("hmac-sha256", os.urandom(32))
-    >>> ct = itb.encrypt_auth(*seeds, mac, b"integrity-protected")
-    >>> pt = itb.decrypt_auth(*seeds, mac, ct)
-
-Hash names match the canonical FFI registry (see hashes/registry.go).
-
-MAC names: ``kmac256``, ``hmac-sha256``, ``hmac-blake3``.
+    sender = itb.Pipeline.init("singlemsg-triple-mac-v1")
+    receiver = itb.Pipeline.open("singlemsg-triple-mac-v1", sender.blob)
+    wire = sender.encrypt_message(b"hello")
+    assert receiver.decrypt_message(wire) == b"hello"
 """
 
-from ._ffi import (
-    Seed,
-    MAC,
-    encrypt,
-    decrypt,
-    encrypt_triple,
-    decrypt_triple,
-    encrypt_auth,
-    decrypt_auth,
-    encrypt_auth_triple,
-    decrypt_auth_triple,
-    list_hashes,
-    list_macs,
-    version,
-    set_bit_soup,
-    set_lock_soup,
-    set_lock_batch,
-    set_max_workers,
-    set_nonce_bits,
-    set_barrier_fill,
-    get_bit_soup,
-    get_lock_soup,
-    get_lock_batch,
-    get_max_workers,
-    get_nonce_bits,
-    get_barrier_fill,
-    set_memory_limit,
-    set_gc_percent,
-    max_key_bits,
-    channels,
-    header_size,
-    parse_chunk_len,
-    last_error,
-    ITBError,
-    ItbStreamTruncatedError,
-    ItbStreamAfterFinalError,
-    STATUS_OK,
-    STATUS_BAD_HASH,
-    STATUS_BAD_KEY_BITS,
-    STATUS_BAD_HANDLE,
-    STATUS_BAD_INPUT,
-    STATUS_BUFFER_TOO_SMALL,
-    STATUS_ENCRYPT_FAILED,
-    STATUS_DECRYPT_FAILED,
-    STATUS_SEED_WIDTH_MIX,
-    STATUS_BAD_MAC,
-    STATUS_MAC_FAILURE,
-    STATUS_EASY_CLOSED,
-    STATUS_EASY_MALFORMED,
-    STATUS_EASY_VERSION_TOO_NEW,
-    STATUS_EASY_UNKNOWN_PRIMITIVE,
-    STATUS_EASY_UNKNOWN_MAC,
-    STATUS_EASY_BAD_KEY_BITS,
-    STATUS_EASY_MISMATCH,
-    STATUS_EASY_LOCKSEED_AFTER_ENCRYPT,
-    STATUS_BLOB_MODE_MISMATCH,
-    STATUS_BLOB_MALFORMED,
-    STATUS_BLOB_VERSION_TOO_NEW,
-    STATUS_BLOB_TOO_MANY_OPTS,
-    STATUS_STREAM_TRUNCATED,
-    STATUS_STREAM_AFTER_FINAL,
-    STATUS_INTERNAL,
-)
-from .streams import (
-    StreamEncryptor,
-    StreamDecryptor,
-    StreamEncryptor3,
-    StreamDecryptor3,
-    StreamEncryptorAuth,
-    StreamDecryptorAuth,
-    StreamEncryptorAuth3,
-    StreamDecryptorAuth3,
-    encrypt_stream,
-    decrypt_stream,
-    encrypt_stream_triple,
-    decrypt_stream_triple,
-    encrypt_stream_auth,
-    decrypt_stream_auth,
-    encrypt_stream_auth_triple,
-    decrypt_stream_auth_triple,
-    DEFAULT_CHUNK_SIZE,
-)
-from .easy import (
-    Encryptor,
-    EasyMismatchError,
-    peek_config,
-    last_mismatch_field,
-)
-from .blob import (
-    Blob128,
-    Blob256,
-    Blob512,
-    BlobModeMismatchError,
-    BlobMalformedError,
-    BlobVersionTooNewError,
-    SLOT_N,
-    SLOT_D,
-    SLOT_S,
-    SLOT_L,
-    SLOT_D1,
-    SLOT_D2,
-    SLOT_D3,
-    SLOT_S1,
-    SLOT_S2,
-    SLOT_S3,
-    OPT_LOCKSEED,
-    OPT_MAC,
-)
+from __future__ import annotations
+
+from .error import ItbError
+from .opts import Opts
+from .pipeline import Pipeline, register_profile
+from .runtime import set_gc_percent, set_memory_limit, version
+from .status import Status
+from .stream import DecryptStream, EncryptStream
+
+__version__ = "0.3.0"
 
 __all__ = [
-    "Seed",
-    "MAC",
-    "encrypt",
-    "decrypt",
-    "encrypt_triple",
-    "decrypt_triple",
-    "encrypt_auth",
-    "decrypt_auth",
-    "encrypt_auth_triple",
-    "decrypt_auth_triple",
-    "StreamEncryptor",
-    "StreamDecryptor",
-    "StreamEncryptor3",
-    "StreamDecryptor3",
-    "StreamEncryptorAuth",
-    "StreamDecryptorAuth",
-    "StreamEncryptorAuth3",
-    "StreamDecryptorAuth3",
-    "encrypt_stream",
-    "decrypt_stream",
-    "encrypt_stream_triple",
-    "decrypt_stream_triple",
-    "encrypt_stream_auth",
-    "decrypt_stream_auth",
-    "encrypt_stream_auth_triple",
-    "decrypt_stream_auth_triple",
-    "DEFAULT_CHUNK_SIZE",
-    "list_hashes",
-    "list_macs",
-    "version",
-    "set_bit_soup",
-    "set_lock_soup",
-    "set_lock_batch",
-    "set_max_workers",
-    "set_nonce_bits",
-    "set_barrier_fill",
-    "get_bit_soup",
-    "get_lock_soup",
-    "get_lock_batch",
-    "get_max_workers",
-    "get_nonce_bits",
-    "get_barrier_fill",
-    "set_memory_limit",
+    "DecryptStream",
+    "EncryptStream",
+    "ItbError",
+    "Opts",
+    "Pipeline",
+    "Status",
+    "__version__",
+    "register_profile",
     "set_gc_percent",
-    "max_key_bits",
-    "channels",
-    "header_size",
-    "parse_chunk_len",
-    "last_error",
-    "ITBError",
-    "ItbStreamTruncatedError",
-    "ItbStreamAfterFinalError",
-    "Encryptor",
-    "EasyMismatchError",
-    "peek_config",
-    "last_mismatch_field",
-    "Blob128",
-    "Blob256",
-    "Blob512",
-    "BlobModeMismatchError",
-    "BlobMalformedError",
-    "BlobVersionTooNewError",
-    "SLOT_N",
-    "SLOT_D",
-    "SLOT_S",
-    "SLOT_L",
-    "SLOT_D1",
-    "SLOT_D2",
-    "SLOT_D3",
-    "SLOT_S1",
-    "SLOT_S2",
-    "SLOT_S3",
-    "OPT_LOCKSEED",
-    "OPT_MAC",
-    "STATUS_OK",
-    "STATUS_BAD_HASH",
-    "STATUS_BAD_KEY_BITS",
-    "STATUS_BAD_HANDLE",
-    "STATUS_BAD_INPUT",
-    "STATUS_BUFFER_TOO_SMALL",
-    "STATUS_ENCRYPT_FAILED",
-    "STATUS_DECRYPT_FAILED",
-    "STATUS_SEED_WIDTH_MIX",
-    "STATUS_BAD_MAC",
-    "STATUS_MAC_FAILURE",
-    "STATUS_EASY_CLOSED",
-    "STATUS_EASY_MALFORMED",
-    "STATUS_EASY_VERSION_TOO_NEW",
-    "STATUS_EASY_UNKNOWN_PRIMITIVE",
-    "STATUS_EASY_UNKNOWN_MAC",
-    "STATUS_EASY_BAD_KEY_BITS",
-    "STATUS_EASY_MISMATCH",
-    "STATUS_EASY_LOCKSEED_AFTER_ENCRYPT",
-    "STATUS_BLOB_MODE_MISMATCH",
-    "STATUS_BLOB_MALFORMED",
-    "STATUS_BLOB_VERSION_TOO_NEW",
-    "STATUS_BLOB_TOO_MANY_OPTS",
-    "STATUS_STREAM_TRUNCATED",
-    "STATUS_STREAM_AFTER_FINAL",
-    "STATUS_INTERNAL",
+    "set_memory_limit",
+    "version",
 ]

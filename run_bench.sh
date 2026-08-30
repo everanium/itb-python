@@ -1,32 +1,12 @@
 #!/usr/bin/env bash
 #
-# run_bench.sh -- canonical 4-pass bench runner for the Python
-# binding. Sequentially runs:
-#
-#   Pass 1: Single Ouroboros, ITB_LOCKSEED unset
-#   Pass 2: Triple Ouroboros, ITB_LOCKSEED unset
-#   Pass 3: Single Ouroboros, ITB_LOCKSEED=1
-#   Pass 4: Triple Ouroboros, ITB_LOCKSEED=1
-#
-# Each pass walks the PRF-grade primitives plus one Mixed variant
-# and converges per case via the in-process Go-bench-style harness.
-# Total wall-clock at the default 5-second per-case budget is about
-# 30-40 minutes.
-#
-# Environment variables forwarded to the bench binaries:
-#   ITB_NONCE_BITS    nonce width (128 / 256 / 512; default 128)
-#   ITB_BENCH_FILTER  substring match against bench-case names
-#   ITB_BENCH_MIN_SEC per-case wall-clock budget (default 5.0)
-#
-# `ITB_LOCKSEED` is managed by this script per pass.
+# run_bench.sh -- micro-benchmark runner for the Python binding.
+# Builds libitb.so via build.sh, then runs the benches/bench_*.py
+# scripts: encrypt_message, encrypt_stream_pump, and
+# encrypt_stream_one_shot throughput at 1 MiB / 16 MiB / 64 MiB.
 #
 # Usage:
-#   ./run_bench.sh                  # full 4-pass canonical sweep
-#   ./run_bench.sh single           # pass 1 + pass 3 only
-#   ./run_bench.sh triple           # pass 2 + pass 4 only
-#   ./run_bench.sh --no-lockseed    # pass 1 + pass 2 only
-#   ./run_bench.sh --lockseed-only  # pass 3 + pass 4 only
-#   ./run_bench.sh --wrapper-only   # only the wrapper bench (skip Single/Triple/LockSeed)
+#   ./run_bench.sh
 
 set -eu
 set -o pipefail
@@ -35,69 +15,44 @@ cd "$(dirname "$0")"
 REPO_ROOT="$(cd ../.. && pwd)"
 DIST_DIR="$REPO_ROOT/dist/linux-amd64"
 
-if [[ ! -f "$DIST_DIR/libitb.so" ]]; then
-    echo "error: libitb.so not found at $DIST_DIR" >&2
-    echo "       run ./build.sh first" >&2
-    exit 1
+./build.sh
+
+export ITB_LIBITB_PATH="$DIST_DIR/libitb.so"
+
+# Go-runtime pacing defaults for bench-scale allocation churn; the
+# `:-` form respects any override set by the caller. The bench mains
+# apply the same caps programmatically.
+export ITB_GOMEMLIMIT="${ITB_GOMEMLIMIT:-512MiB}"
+export ITB_GOGC="${ITB_GOGC:-20}"
+
+# Bench-shape defaults — match the root Go BENCH3.md pin so the
+# throughput numbers are directly comparable to the shipped Go
+# Encrypt3x{128,256,512}Cfg baseline. Override any of these before
+# calling the script to change the shape.
+export ITB_NONCE_BITS="${ITB_NONCE_BITS:-512}"
+export ITB_KEY_BITS="${ITB_KEY_BITS:-1024}"
+export ITB_WITH_PARALLAX="${ITB_WITH_PARALLAX:-false}"
+export ITB_WITH_WRAPPER="${ITB_WITH_WRAPPER:-false}"
+export ITB_INNER_HASH="${ITB_INNER_HASH:-areion512}"
+export ITB_BENCH_MIN_SEC="${ITB_BENCH_MIN_SEC:-5}"
+
+# ITB_WITH_MAC=true derives MAC/AEAD profile counterparts. When
+# ITB_PROFILE is set explicitly by the caller, it wins over the
+# derivation and applies to both shapes (expert override).
+: "${ITB_WITH_MAC:=false}"
+if [ -n "${ITB_PROFILE:-}" ]; then
+    ITB_MSG_PROFILE_DEFAULT="${ITB_PROFILE}"
+    ITB_STREAM_PROFILE_DEFAULT="${ITB_PROFILE}"
+elif [ "${ITB_WITH_MAC}" = "true" ]; then
+    ITB_MSG_PROFILE_DEFAULT="singlemsg-triple-mac-v1"
+    ITB_STREAM_PROFILE_DEFAULT="streaming-aead-triple-mac-v1"
+else
+    ITB_MSG_PROFILE_DEFAULT="singlemsg-triple-nomac-v1"
+    ITB_STREAM_PROFILE_DEFAULT="streaming-noaead-triple-v1"
 fi
 
-export LD_LIBRARY_PATH="$DIST_DIR${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-
-run_single=1
-run_triple=1
-run_no_lockseed=1
-run_with_lockseed=1
-wrapper_only=0
-case "${1:-}" in
-    single)            run_triple=0;;
-    triple)            run_single=0;;
-    --no-lockseed)     run_with_lockseed=0;;
-    --lockseed-only)   run_no_lockseed=0;;
-    --wrapper-only)    wrapper_only=1;;
-    -h|--help)         sed -n '3,31p' "$0"; exit 0;;
-    "")                ;;
-    *)                 echo "unknown option: $1" >&2; exit 2;;
-esac
-
-if [[ $wrapper_only -eq 1 ]]; then
-    echo
-    echo "===================================================================="
-    echo "  Wrapper only -- format-deniability bench (skip Single/Triple/LockSeed)"
-    echo "===================================================================="
-    unset ITB_LOCKSEED
-    exec python -m wrapper.benchmarks.bench_wrapper
-fi
-
-run_pass() {
-    local label="$1"
-    local mode="$2"
-    local lockseed="$3"
-    echo
-    echo "===================================================================="
-    echo "  $label"
-    echo "===================================================================="
-    if [[ "$lockseed" == "1" ]]; then
-        ITB_LOCKSEED=1 python -m easy.benchmarks.bench_${mode}
-    else
-        unset ITB_LOCKSEED
-        python -m easy.benchmarks.bench_${mode}
-    fi
-}
-
-if [[ $run_no_lockseed -eq 1 && $run_single -eq 1 ]]; then
-    run_pass "Pass 1 / 4 -- Single, ITB_LOCKSEED=off" single 0
-fi
-if [[ $run_no_lockseed -eq 1 && $run_triple -eq 1 ]]; then
-    run_pass "Pass 2 / 4 -- Triple, ITB_LOCKSEED=off" triple 0
-fi
-if [[ $run_with_lockseed -eq 1 && $run_single -eq 1 ]]; then
-    run_pass "Pass 3 / 4 -- Single, ITB_LOCKSEED=on" single 1
-fi
-if [[ $run_with_lockseed -eq 1 && $run_triple -eq 1 ]]; then
-    run_pass "Pass 4 / 4 -- Triple, ITB_LOCKSEED=on" triple 1
-fi
-
-echo
-echo "===================================================================="
-echo "  bench passes complete -- update easy/benchmarks/BENCH.md by hand"
-echo "===================================================================="
+export ITB_PROFILE="${ITB_MSG_PROFILE_DEFAULT}"
+python3 benches/bench_message.py
+export ITB_PROFILE="${ITB_STREAM_PROFILE_DEFAULT}"
+python3 benches/bench_stream.py
+python3 benches/bench_stream_one_shot.py

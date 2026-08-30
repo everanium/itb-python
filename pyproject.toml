@@ -4,10 +4,10 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "itb"
-version = "0.1.2"
-description = "Python binding for ITB (information-theoretic barrier) cipher via the libitb shared library"
-requires-python = ">=3.9"
-dependencies = ["cffi>=1.15"]
+version = "0.3.0"
+description = "Python binding for the ITB cipher's Triple Pipeline via the libitb shared library (ctypes)"
+requires-python = ">=3.10"
+dependencies = []
 
 [tool.setuptools.packages.find]
 where = ["."]
