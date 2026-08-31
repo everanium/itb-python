@@ -60,6 +60,19 @@ class Opts:
     def with_inner_hash(self, name: str) -> Opts:
         return self.with_raw("innerHash", name)
 
+    def with_inner_hashes(self, names: Sequence[str]) -> Opts:
+        """Comma-joins an 8-slot per-call inner-hash constellation into
+        the ``innerHashes`` opts key. Parallel to the Go-side
+        ``Opts.MixedHashes [8]string`` per-call override; slot ordering
+        is ``[noise, lock, data1, data2, data3, start1, start2,
+        start3]``.
+
+        Fail-fast validation surfaces at Init on the Go side; a typo'd
+        slot or width mismatch surfaces with an error naming the
+        offending slot. When both this and :meth:`with_inner_hash` are
+        set, the mixed override wins on the Go side."""
+        return self.with_raw("innerHashes", ",".join(names))
+
     def with_outer_cipher(self, name: str) -> Opts:
         return self.with_raw("outerCipher", name)
 

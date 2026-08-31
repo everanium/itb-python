@@ -69,6 +69,26 @@ class ErrorsTest(unittest.TestCase):
         self.assertIsNotNone(ctx.exception.status)
         self.assertNotEqual(ctx.exception.status, itb.Status.OK)
 
+    def test_per_call_inner_hashes_override_round_trips(self) -> None:
+        # The single-primitive width-512 base profile takes an 8-slot
+        # per-call MixedHashes override (Go-side Opts.MixedHashes,
+        # wired through the innerHashes= opts key). Round-trip proves
+        # the typed helper's comma-join lands in the Go parser
+        # correctly.
+        mix = [
+            "areion512", "blake2b512", "areion512", "blake2b512",
+            "areion512", "blake2b512", "areion512", "blake2b512",
+        ]
+        sender_opts = itb.Opts().with_inner_hashes(mix)
+        receiver_opts = itb.Opts().with_inner_hashes(mix)
+        with itb.Pipeline.init("singlemsg-triple-mac-v1", sender_opts) as sender:
+            with itb.Pipeline.open(
+                "singlemsg-triple-mac-v1", sender.blob, receiver_opts
+            ) as receiver:
+                plain = b"per-call inner-hashes override round-trip payload"
+                wire = sender.encrypt_message(plain)
+                self.assertEqual(receiver.decrypt_message(wire), plain)
+
 
 if __name__ == "__main__":
     unittest.main()
