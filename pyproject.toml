@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "itb"
-version = "0.3.3"
+version = "0.3.4"
 description = "Python binding for the ITB cipher's Triple Pipeline via the libitb shared library (ctypes)"
 requires-python = ">=3.10"
 dependencies = []
