@@ -19,9 +19,7 @@ class StreamCancelTest(unittest.TestCase):
             sess.free()
 
             # The Pipeline stays usable after the cancelled session.
-            with itb.Pipeline.open(
-                "streaming-aead-triple-mac-v1", sender.blob
-            ) as receiver:
+            with itb.Pipeline.load(sender.save()) as receiver:
                 wire = sender.encrypt_message(b"after cancel")
                 self.assertEqual(receiver.decrypt_message(wire), b"after cancel")
 

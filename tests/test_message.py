@@ -38,7 +38,7 @@ class MessageTest(unittest.TestCase):
         for profile in PROFILES:
             with self.subTest(profile=profile):
                 with itb.Pipeline.init(profile) as sender:
-                    with itb.Pipeline.open(profile, sender.blob) as receiver:
+                    with itb.Pipeline.load(sender.save()) as receiver:
                         for size in (4 * 1024, 256 * 1024):
                             plain = payload(size, size)
                             wire = sender.encrypt_message(plain)

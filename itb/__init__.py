@@ -13,7 +13,7 @@ Example::
     import itb
 
     sender = itb.Pipeline.init("singlemsg-triple-mac-v1")
-    receiver = itb.Pipeline.open("singlemsg-triple-mac-v1", sender.blob)
+    receiver = itb.Pipeline.load(sender.save())
     wire = sender.encrypt_message(b"hello")
     assert receiver.decrypt_message(wire) == b"hello"
 """
@@ -22,12 +22,12 @@ from __future__ import annotations
 
 from .error import ItbError
 from .opts import Opts
-from .pipeline import Pipeline, register_profile
+from .pipeline import Pipeline, Profile, inspect, lookup, profiles, register
 from .runtime import set_gc_percent, set_memory_limit, version
 from .status import Status
 from .stream import DecryptStream, EncryptStream
 
-__version__ = "0.3.5"
+__version__ = "0.4.1"
 
 __all__ = [
     "DecryptStream",
@@ -35,9 +35,13 @@ __all__ = [
     "ItbError",
     "Opts",
     "Pipeline",
+    "Profile",
     "Status",
     "__version__",
-    "register_profile",
+    "inspect",
+    "lookup",
+    "profiles",
+    "register",
     "set_gc_percent",
     "set_memory_limit",
     "version",

@@ -11,9 +11,7 @@ import itb
 class StreamPumpTest(unittest.TestCase):
     def test_pump_round_trip_1mib(self) -> None:
         with itb.Pipeline.init("streaming-aead-triple-mac-v1") as sender:
-            with itb.Pipeline.open(
-                "streaming-aead-triple-mac-v1", sender.blob
-            ) as receiver:
+            with itb.Pipeline.load(sender.save()) as receiver:
                 plain = bytes(i % 251 for i in range(1 << 20))
 
                 wire_buf = io.BytesIO()
@@ -27,9 +25,7 @@ class StreamPumpTest(unittest.TestCase):
 
     def test_pump_matches_one_shot(self) -> None:
         with itb.Pipeline.init("streaming-aead-triple-mac-v1") as sender:
-            with itb.Pipeline.open(
-                "streaming-aead-triple-mac-v1", sender.blob
-            ) as receiver:
+            with itb.Pipeline.load(sender.save()) as receiver:
                 plain = bytes(i % 199 for i in range(65_536))
                 wire = sender.encrypt_stream_one_shot(plain)
 

@@ -1,11 +1,14 @@
-"""Handle-lifetime wrapper around the Triple Pipeline surface."""
+"""Handle-lifetime wrapper around the Triple Pipeline surface plus the
+profile-catalogue entries (inspect / register / lookup / profiles)."""
 
 from __future__ import annotations
 
 import ctypes
+import json
+import os
 from collections.abc import Callable
 from types import TracebackType
-from typing import BinaryIO
+from typing import Any, BinaryIO
 
 from . import _ffi
 from .error import ItbError
@@ -15,8 +18,12 @@ from .stream import DecryptStream, EncryptStream
 
 Buffer = bytes | bytearray | memoryview
 
-# Floor capacity for blob output buffers (Init / Rekey).
+# Floor capacity for blob output buffers (Init / Save / Rekey).
 _BLOB_CAP = 64 * 1024
+
+# Floor capacity for profile-JSON output buffers (Inspect / Lookup /
+# Profiles).
+_JSON_CAP = 4 * 1024
 
 
 def _out_cap(payload: int) -> int:
@@ -36,7 +43,7 @@ def _retry_once(
     n = ctypes.c_size_t(0)
     rc = call(buf, n)
     # Retry only when the reported length strictly exceeds the current
-    # capacity — pattern P1 in the fleet audit.
+    # capacity.
     if rc == int(Status.BUFFER_TOO_SMALL) and n.value > cap:
         buf = ctypes.create_string_buffer(n.value)
         rc = call(buf, n)
@@ -44,28 +51,44 @@ def _retry_once(
     return buf.raw[: n.value]
 
 
-class Pipeline:
-    """A Triple Pipeline session plus its exported blob bytes.
+def _masters(
+    masters: tuple[Buffer, Buffer] | None,
+) -> tuple[bytes, bytes, int]:
+    """Folds the optional ``(perm, wrap)`` master pair into the
+    ``(perm_master, wrap_master, masters_count)`` triple the Load
+    entries take: count 0 selects the blob-embedded masters, count 2
+    overrides them."""
+    if masters is None:
+        return b"", b"", 0
+    return _ffi.as_bytes(masters[0]), _ffi.as_bytes(masters[1]), 2
 
-    The blob carries the session bundle the receiver feeds to
-    :meth:`Pipeline.open`; :meth:`Pipeline.rekey` refreshes it. The
-    Pipeline is a context manager; leaving the ``with`` block (or
-    garbage collection via ``__del__``) frees the handle — libitb
-    zeroes key material internally.
+
+def _fspath(path: str | os.PathLike[str]) -> bytes:
+    return os.fsencode(os.fspath(path))
+
+
+class Pipeline:
+    """A Triple Pipeline session.
+
+    :meth:`Pipeline.save` returns the serialised session blob the
+    receiver feeds to :meth:`Pipeline.load`; :meth:`Pipeline.rekey`
+    refreshes it. The Pipeline is a context manager; leaving the
+    ``with`` block (or garbage collection via ``__del__``) frees the
+    handle — libitb zeroes key material internally.
 
     Streaming-decrypt caveat: chunked Streaming AEAD verifies per
     chunk, so plaintext of verified chunks is released before a later
     chunk can fail authentication.
     """
 
-    def __init__(self, handle: int, blob: bytes) -> None:
-        # Not part of the public API — use init() / open().
+    def __init__(self, handle: int) -> None:
+        # Not part of the public API — use init() / load() / load_f().
         self._handle = handle
-        self._blob = blob
 
     @classmethod
     def init(cls, profile: str, opts: Opts | None = None) -> Pipeline:
-        """Constructs a fresh Pipeline against the named profile. On a
+        """Constructs a fresh Pipeline against the named profile. The
+        session blob is available through :meth:`save`. On a
         blob-buffer retry the Init re-runs and yields a fresh session
         (the undersized attempt is closed by libitb before
         returning)."""
@@ -86,40 +109,28 @@ class Pipeline:
                 )
             )
 
-        blob = _retry_once(_BLOB_CAP, call)
-        return cls(handle.value, blob)
+        _retry_once(_BLOB_CAP, call)
+        return cls(handle.value)
 
     @classmethod
-    def open(
-        cls,
-        profile: str,
-        blob: Buffer,
-        opts: Opts | None = None,
-        masters: tuple[Buffer, Buffer] | None = None,
+    def load(
+        cls, blob: Buffer, masters: tuple[Buffer, Buffer] | None = None
     ) -> Pipeline:
         """Reconstructs a Pipeline from a blob produced by
-        :meth:`Pipeline.init` or :meth:`Pipeline.rekey`. ``masters``
-        is ``None`` to use the blob-embedded masters, or a
-        ``(perm, wrap)`` pair to override them."""
+        :meth:`Pipeline.save` or :meth:`Pipeline.rekey`. The blob's
+        embedded profile record is the sole structural source — no
+        profile name, no opts. ``masters`` is ``None`` to use the
+        blob-embedded masters, or a ``(perm, wrap)`` pair to override
+        them."""
         s = _ffi.syms()
-        profile_b = profile.encode("utf-8")
-        opts_b = (opts or Opts()).build().encode("utf-8")
         blob_b = _ffi.as_bytes(blob)
-        if masters is None:
-            pm, wm, count = b"", b"", 0
-        else:
-            pm, wm = _ffi.as_bytes(masters[0]), _ffi.as_bytes(masters[1])
-            if not pm or not wm:
-                raise ItbError("master override buffers must be non-empty")
-            count = 2
+        pm, wm, count = _masters(masters)
         handle = ctypes.c_size_t(0)
         _ffi.check(
             int(
-                s.lib.ITB_Triple_Open(
-                    profile_b,
+                s.lib.ITB_Triple_Load(
                     blob_b,
                     len(blob_b),
-                    opts_b,
                     pm,
                     len(pm),
                     wm,
@@ -129,17 +140,58 @@ class Pipeline:
                 )
             )
         )
-        return cls(handle.value, blob_b)
+        return cls(handle.value)
 
-    @property
-    def blob(self) -> bytes:
-        """The exported session bundle bytes for the receiver side."""
-        return self._blob
+    @classmethod
+    def load_f(
+        cls,
+        path: str | os.PathLike[str],
+        masters: tuple[Buffer, Buffer] | None = None,
+    ) -> Pipeline:
+        """:meth:`load` for a blob stored in a file. The file is read
+        inside the library."""
+        s = _ffi.syms()
+        pm, wm, count = _masters(masters)
+        handle = ctypes.c_size_t(0)
+        _ffi.check(
+            int(
+                s.lib.ITB_Triple_LoadF(
+                    _fspath(path),
+                    pm,
+                    len(pm),
+                    wm,
+                    len(wm),
+                    count,
+                    ctypes.byref(handle),
+                )
+            )
+        )
+        return cls(handle.value)
 
-    def rekey(self, perm: Buffer, wrap: Buffer) -> None:
-        """Rotates the parallax + wrapper masters and refreshes
-        :attr:`blob`. Must not run concurrently with cipher calls or
-        open stream sessions on the same Pipeline."""
+    def save(self) -> bytes:
+        """The current serialised session blob — the bytes ``init``
+        produced, the bytes ``load`` re-marshalled, or the bytes of
+        the latest :meth:`rekey`."""
+        s = _ffi.syms()
+
+        def call(buf: ctypes.Array[ctypes.c_char], n: ctypes.c_size_t) -> int:
+            return int(
+                s.lib.ITB_Triple_Save(self._handle, buf, len(buf), ctypes.byref(n))
+            )
+
+        return _retry_once(_BLOB_CAP, call)
+
+    def save_f(self, path: str | os.PathLike[str]) -> None:
+        """Writes the current session blob to ``path`` inside the
+        library (mode ``0600``; the containing directory must
+        exist)."""
+        _ffi.check(int(_ffi.syms().lib.ITB_Triple_SaveF(self._handle, _fspath(path))))
+
+    def rekey(self, perm: Buffer, wrap: Buffer) -> bytes:
+        """Rotates the parallax + wrapper masters and returns the
+        refreshed session blob (also observable through :meth:`save`).
+        Must not run concurrently with cipher calls or open stream
+        sessions on the same Pipeline."""
         s = _ffi.syms()
         pm, wm = _ffi.as_bytes(perm), _ffi.as_bytes(wrap)
 
@@ -157,7 +209,15 @@ class Pipeline:
                 )
             )
 
-        self._blob = _retry_once(max(_BLOB_CAP, len(self._blob)), call)
+        return _retry_once(_BLOB_CAP, call)
+
+    def max_workers(self, n: int) -> None:
+        """Sets the worker cap for every subsequent cipher call. ``n``
+        is clamped, never rejected: ``n <= 0`` selects auto
+        (``runtime.NumCPU``), ``1..256`` pins the cap, larger values
+        are treated as 256. The cap is per-machine tuning and is never
+        written to the blob."""
+        _ffi.check(int(_ffi.syms().lib.ITB_Triple_MaxWorkers(self._handle, n)))
 
     def close(self) -> None:
         """Zeroes the Pipeline's key material and marks it closed.
@@ -252,26 +312,72 @@ class Pipeline:
             pass
 
     def __repr__(self) -> str:
-        # The blob bytes are elided — session-bundle material does not
-        # belong in debug logs.
-        return f"Pipeline(blob_len={len(self._blob)})"
+        return f"Pipeline(handle={'open' if self._handle else 'freed'})"
 
 
-def register_profile(name: str, opts: Opts) -> None:
-    """Registers a user-defined Triple profile under ``name`` so
-    subsequent :meth:`Pipeline.init` / :meth:`Pipeline.open` calls
-    resolve it. The opts follow the register-profile grammar validated
-    by Go (``mode``, ``width``, ``innerHash`` / ``innerHashes``,
-    ``keyBits``, ``macName``, ``outerCipher``, ``parallaxPalette``,
-    ``parallaxSegmentSize``, ``chunkSize``, ``parallaxOn``,
-    ``wrapperOn``) — build them with :meth:`Opts.with_raw` plus the
-    typed setters where key names coincide. A duplicate name fails
-    with :attr:`~itb.status.Status.PROFILE_EXISTS`."""
+# Profile record: the JSON object libitb emits from inspect / lookup
+# and accepts in register, decoded with the standard-library json
+# module. Key set: name, mode, width, hash, hashes, keybits, mac,
+# tagstub, chunk, wrapper, outer, parallax, palette, segment.
+Profile = dict[str, Any]
+
+
+def _json_out(call: Callable[[ctypes.Array[ctypes.c_char], ctypes.c_size_t], int]) -> Any:
+    return json.loads(_retry_once(_JSON_CAP, call).decode("utf-8"))
+
+
+def inspect(blob: Buffer) -> Profile:
+    """Decodes the blob's embedded profile record without opening a
+    Pipeline. No registry read, no primitive probe — a primitive name
+    the local build lacks is returned unchanged."""
     s = _ffi.syms()
-    _ffi.check(
-        int(
-            s.lib.ITB_Triple_RegisterProfile(
-                name.encode("utf-8"), opts.build().encode("utf-8")
+    blob_b = _ffi.as_bytes(blob)
+
+    def call(buf: ctypes.Array[ctypes.c_char], n: ctypes.c_size_t) -> int:
+        return int(
+            s.lib.ITB_Triple_Inspect(
+                blob_b, len(blob_b), buf, len(buf), ctypes.byref(n)
             )
         )
+
+    return _json_out(call)
+
+
+def register(name: str, profile: Profile | str) -> None:
+    """Registers a profile record under ``name`` so subsequent
+    :meth:`Pipeline.init` / :func:`lookup` calls resolve it.
+    ``profile`` is the record as a ``dict`` (the shape :func:`inspect`
+    returns) or an already-encoded JSON string; a ``name`` key inside
+    it, if present, must be empty or equal to ``name``. Validation
+    (name pattern, reserved prefixes, field rules) is performed by
+    libitb; a duplicate name fails with
+    :attr:`~itb.status.Status.PROFILE_EXISTS`."""
+    s = _ffi.syms()
+    text = profile if isinstance(profile, str) else json.dumps(profile)
+    _ffi.check(
+        int(s.lib.ITB_Triple_Register(name.encode("utf-8"), text.encode("utf-8")))
     )
+
+
+def lookup(name: str) -> Profile:
+    """Returns the profile record registered under ``name`` (a shipped
+    catalogue entry or a prior :func:`register`). An unknown name
+    raises :class:`~itb.error.ItbError` with
+    :attr:`~itb.status.Status.UNKNOWN_PROFILE`."""
+    s = _ffi.syms()
+    name_b = name.encode("utf-8")
+
+    def call(buf: ctypes.Array[ctypes.c_char], n: ctypes.c_size_t) -> int:
+        return int(s.lib.ITB_Triple_Lookup(name_b, buf, len(buf), ctypes.byref(n)))
+
+    return _json_out(call)
+
+
+def profiles() -> list[str]:
+    """The sorted list of every registered profile name."""
+    s = _ffi.syms()
+
+    def call(buf: ctypes.Array[ctypes.c_char], n: ctypes.c_size_t) -> int:
+        return int(s.lib.ITB_Triple_Profiles(buf, len(buf), ctypes.byref(n)))
+
+    return list(_json_out(call))

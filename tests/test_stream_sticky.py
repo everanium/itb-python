@@ -17,9 +17,7 @@ import itb
 class StreamStickyTest(unittest.TestCase):
     def test_tampered_wire_sticky_failure(self) -> None:
         with itb.Pipeline.init("streaming-aead-triple-mac-v1") as sender:
-            with itb.Pipeline.open(
-                "streaming-aead-triple-mac-v1", sender.blob
-            ) as receiver:
+            with itb.Pipeline.load(sender.save()) as receiver:
                 plain = bytes(i % 227 for i in range(65_536))
                 base_wire = sender.encrypt_stream_one_shot(plain)
                 self.assertGreater(

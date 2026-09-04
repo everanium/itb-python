@@ -13,9 +13,7 @@ class StreamIncrementalTest(unittest.TestCase):
         # Small chunk size so the 64 KiB payload spans many chunks.
         opts = itb.Opts().with_chunk_size(4096)
         with itb.Pipeline.init("streaming-aead-triple-mac-v1", opts) as sender:
-            with itb.Pipeline.open(
-                "streaming-aead-triple-mac-v1", sender.blob, opts
-            ) as receiver:
+            with itb.Pipeline.load(sender.save()) as receiver:
                 plain = bytes(i % 241 for i in range(65_536))
 
                 # Encrypt: 17-byte writes, then end + 23-byte drains.

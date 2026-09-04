@@ -1,4 +1,4 @@
-"""Init -> Rekey -> Open receiver with the rotated blob -> round
+"""Init -> Rekey -> Load receiver with the rotated blob -> round
 trip."""
 
 from __future__ import annotations
@@ -11,14 +11,13 @@ import itb
 class RekeyTest(unittest.TestCase):
     def test_rekey_round_trip(self) -> None:
         with itb.Pipeline.init("singlemsg-triple-mac-v1") as sender:
-            blob_before = sender.blob
+            blob_before = sender.save()
 
-            sender.rekey(b"\x11" * 32, b"\x22" * 32)
-            self.assertNotEqual(
-                sender.blob, blob_before, "rekey must refresh the blob"
-            )
+            rotated = sender.rekey(b"\x11" * 32, b"\x22" * 32)
+            self.assertNotEqual(rotated, blob_before, "rekey must refresh the blob")
+            self.assertEqual(rotated, sender.save(), "save must observe the rekey")
 
-            with itb.Pipeline.open("singlemsg-triple-mac-v1", sender.blob) as receiver:
+            with itb.Pipeline.load(rotated) as receiver:
                 plain = b"post-rekey payload"
                 wire = sender.encrypt_message(plain)
                 self.assertEqual(receiver.decrypt_message(wire), plain)

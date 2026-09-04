@@ -22,9 +22,9 @@ class Status(enum.IntEnum):
     SEED_WIDTH_MIX = 8
     BAD_MAC = 9
     MAC_FAILURE = 10
-    RESERVED_11 = 11
-    RESERVED_12 = 12
-    RESERVED_13 = 13
+    BLOB_MALFORMED_RECIPE = 11
+    RECIPE_PRIMITIVE_UNKNOWN = 12
+    UNKNOWN_PROFILE = 13
     RESERVED_14 = 14
     RESERVED_15 = 15
     RESERVED_16 = 16
@@ -56,9 +56,11 @@ _LABELS: dict[Status, str] = {
     Status.SEED_WIDTH_MIX: "seed width mismatch",
     Status.BAD_MAC: "unknown MAC name or invalid MAC handle",
     Status.MAC_FAILURE: "MAC verification failed",
-    Status.RESERVED_11: "reserved status",
-    Status.RESERVED_12: "reserved status",
-    Status.RESERVED_13: "reserved status",
+    Status.BLOB_MALFORMED_RECIPE: "blob profile record invalid",
+    Status.RECIPE_PRIMITIVE_UNKNOWN: (
+        "blob profile record names a primitive absent from the local registries"
+    ),
+    Status.UNKNOWN_PROFILE: "unknown profile name",
     Status.RESERVED_14: "reserved status",
     Status.RESERVED_15: "reserved status",
     Status.RESERVED_16: "reserved status",

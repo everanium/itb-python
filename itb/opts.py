@@ -15,9 +15,9 @@ from urllib.parse import quote
 
 class Opts:
     """Builder producing the URL-query-encoded opts string consumed by
-    :meth:`itb.Pipeline.init`, :meth:`itb.Pipeline.open`, and
-    :func:`itb.register_profile`. Every setter returns ``self`` for
-    fluent chaining."""
+    :meth:`itb.Pipeline.init`. Every setter returns ``self`` for
+    fluent chaining. (Profile registration takes a JSON record — see
+    :func:`itb.register` — not an ``Opts``.)"""
 
     def __init__(self) -> None:
         self._pairs: list[tuple[str, str]] = []
@@ -37,6 +37,8 @@ class Opts:
         return self.with_raw("withWrapper", "true" if on else "false")
 
     def with_max_workers(self, n: int) -> Opts:
+        """Init-time worker cap; ``n <= 0`` selects auto. The live cap
+        is adjustable later through :meth:`itb.Pipeline.max_workers`."""
         return self.with_raw("maxWorkers", str(n))
 
     def with_nonce_bits(self, n: int) -> Opts:
@@ -82,9 +84,7 @@ class Opts:
 
     def with_raw(self, key: str, value: str) -> Opts:
         """Escape hatch appending a raw ``key=value`` pair. Covers
-        every key the Go side accepts, including the register-profile
-        grammar (``mode``, ``width``, ``innerHashes``, ``parallaxOn``,
-        ``wrapperOn``, …)."""
+        every key the Go side accepts."""
         self._pairs.append((key, value))
         return self
 
