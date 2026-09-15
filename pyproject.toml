@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "libitb3"
+version = "0.5.1"
+description = "ITB Symmetric Cipher Construction with Ambiguity-Based Security - Python"
+readme = "README.md"
+license = "Apache-2.0"
+authors = [{ name = "Andrey Kuvshinov", email = "andrew@encloud.blue" }]
+maintainers = [{ name = "Andrey Kuvshinov", email = "andrew@encloud.blue" }]
+keywords = ["cryptography", "encryption", "cipher", "symmetric", "aead"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Topic :: Security :: Cryptography",
+]
+requires-python = ">=3.10"
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/everanium/itb"
+Repository = "https://github.com/everanium/itb"
+Issues = "https://github.com/everanium/itb/issues"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["itb3*"]
