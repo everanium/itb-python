@@ -380,3 +380,15 @@ def profiles() -> list[str]:
         return int(s.lib.ITB_Triple_Profiles(buf, len(buf), ctypes.byref(n)))
 
     return list(_json_out(call))
+
+
+def hash_names() -> list[str]:
+    """The shipped inner-hash registry as a list of primitive names,
+    in registry order. Runtime-registered custom primitives are not
+    part of this enumeration."""
+    s = _ffi.syms()
+
+    def call(buf: ctypes.Array[ctypes.c_char], n: ctypes.c_size_t) -> int:
+        return int(s.lib.ITB_Triple_HashNames(buf, len(buf), ctypes.byref(n)))
+
+    return list(_json_out(call))

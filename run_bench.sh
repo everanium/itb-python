@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 #
-# run_bench.sh -- micro-benchmark runner for the Python binding.
-# Builds libitb3.so via build.sh, then runs the benches/bench_*.py
-# scripts: encrypt_message, encrypt_stream_pump, and
+# Micro-benchmark runner for the Python binding. Builds libitb3.so
+# via build.sh, then runs the benches/bench_*.py scripts:
+# encrypt_message, encrypt_stream_pump, and
 # encrypt_stream_one_shot throughput at 1 MiB / 16 MiB / 64 MiB.
 #
 # Usage:

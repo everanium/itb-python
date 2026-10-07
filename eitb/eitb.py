@@ -1,11 +1,11 @@
-"""eitb — command-line demonstrator for the ITB Python binding.
+"""Command-line demonstrator for the ITB Python binding.
 
 Subcommands::
 
-    eitb.py version                                   library + binding versions
-    eitb.py profiles                                  registered profile catalogue
-    eitb.py inspect <blob-hex>                        profile record of a blob
-    eitb.py encrypt <profile> <in-file> <out-file>    Single Message encrypt
+    eitb.py version
+    eitb.py profiles
+    eitb.py inspect <blob-hex>
+    eitb.py encrypt <profile> <in-file> <out-file>
     eitb.py decrypt <profile> <blob-hex> <in-file> <out-file>
 
 ``encrypt`` prints the session blob (``Pipeline.save``) to stderr as
@@ -14,6 +14,7 @@ reopens the session with ``Pipeline.load`` (the profile argument only
 routes Single Message versus streaming). ``profiles`` lists the
 registered profile catalogue one name per line; the profiles that
 carry a cipher surface are the ones ``encrypt`` / ``decrypt`` accept.
+``inspect`` prints the profile record a blob carries.
 """
 
 from __future__ import annotations
@@ -30,11 +31,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import itb3 as itb  # noqa: E402
 
 USAGE = """\
-usage: eitb.py version
-       eitb.py profiles
-       eitb.py inspect <blob-hex>
-       eitb.py encrypt <profile> <in-file> <out-file>
-       eitb.py decrypt <profile> <blob-hex> <in-file> <out-file>"""
+usage: eitb version
+       eitb profiles
+       eitb inspect <blob-hex>
+       eitb encrypt <profile> <in-file> <out-file>
+       eitb decrypt <profile> <blob-hex> <in-file> <out-file>"""
 
 
 def cmd_version() -> None:

@@ -65,7 +65,7 @@ class PersistTest(unittest.TestCase):
         self.assertNotIn("nonce_bits", looked)
         self.assertNotIn("barrier_fill", looked)
         recipe = {k: v for k, v in record.items()
-                  if k not in ("nonce_bits", "barrier_fill")}
+                  if k not in ("nonce_bits", "barrier_fill", "container_mode")}
         self.assertEqual(recipe, looked)
 
     def test_inspect_rejects_garbage(self) -> None:
@@ -97,6 +97,32 @@ class PersistTest(unittest.TestCase):
         with itb.Pipeline.init(PROFILE, itb.Opts().with_max_workers(-1)) as pipe:
             wire = pipe.encrypt_message(b"negative cap")
             self.assertEqual(pipe.decrypt_message(wire), b"negative cap")
+
+    def test_drbg_round_trip_and_inspect(self) -> None:
+        for name in ("csprng", "aesitb128"):
+            with self.subTest(drbg=name):
+                with itb.Pipeline.init(PROFILE, itb.Opts().with_drbg(name)) as sender:
+                    blob = sender.save()
+                    self.assertEqual(itb.inspect(blob)["drbg"], name)
+                    with itb.Pipeline.load(blob) as receiver:
+                        plain = f"drbg {name} round trip".encode()
+                        wire = receiver.encrypt_message(plain)
+                        self.assertEqual(sender.decrypt_message(wire), plain)
+
+    def test_drbg_absent_by_default(self) -> None:
+        with itb.Pipeline.init(PROFILE) as pipe:
+            self.assertNotIn("drbg", itb.inspect(pipe.save()))
+        self.assertNotIn("drbg", itb.lookup(PROFILE))
+
+    def test_drbg_survives_register_copy(self) -> None:
+        # drbg is a recipe field: unlike the inspection-only keys, it
+        # stays in a registered copy of an inspected record.
+        with itb.Pipeline.init(PROFILE, itb.Opts().with_drbg("csprng")) as pipe:
+            record = itb.inspect(pipe.save())
+        recipe = {k: v for k, v in record.items()
+                  if k not in ("name", "nonce_bits", "barrier_fill", "container_mode")}
+        itb.register("python-binding-test-drbg-copy", recipe)
+        self.assertEqual(itb.lookup("python-binding-test-drbg-copy")["drbg"], "csprng")
 
 
 if __name__ == "__main__":

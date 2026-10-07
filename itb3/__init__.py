@@ -22,8 +22,25 @@ from __future__ import annotations
 
 from .error import ItbError
 from .opts import Opts
-from .pipeline import Pipeline, Profile, inspect, lookup, profiles, register
-from .runtime import set_gc_percent, set_memory_limit, version
+from .pipeline import (
+    Pipeline,
+    Profile,
+    hash_names,
+    inspect,
+    lookup,
+    profiles,
+    register,
+)
+from .runtime import (
+    drbg_auto_tier,
+    pool_stats,
+    pool_stats_len,
+    set_gc_percent,
+    set_gomaxprocs,
+    set_memory_limit,
+    version,
+    write_heap_profile,
+)
 from .status import Status
 from .stream import DecryptStream, EncryptStream
 
@@ -38,11 +55,17 @@ __all__ = [
     "Profile",
     "Status",
     "__version__",
+    "drbg_auto_tier",
+    "hash_names",
     "inspect",
     "lookup",
+    "pool_stats",
+    "pool_stats_len",
     "profiles",
     "register",
     "set_gc_percent",
+    "set_gomaxprocs",
     "set_memory_limit",
     "version",
+    "write_heap_profile",
 ]

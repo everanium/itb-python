@@ -78,6 +78,9 @@ class Opts:
     def with_outer_cipher(self, name: str) -> Opts:
         return self.with_raw("outerCipher", name)
 
+    def with_drbg(self, name: str) -> Opts:
+        return self.with_raw("drbg", name)
+
     def with_parallax_palette(self, names: Sequence[str]) -> Opts:
         """Comma-joins the palette names (``parallaxPalette``)."""
         return self.with_raw("parallaxPalette", ",".join(names))

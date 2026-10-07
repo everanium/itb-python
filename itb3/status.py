@@ -39,43 +39,6 @@ class Status(enum.IntEnum):
     PROFILE_EXISTS = 26
     INTERNAL = 99
 
-    def label(self) -> str:
-        """Short human-readable label for the status code."""
-        return _LABELS.get(self, "unknown status")
-
-
-_LABELS: dict[Status, str] = {
-    Status.OK: "ok",
-    Status.BAD_HASH: "unknown hash name",
-    Status.BAD_KEY_BITS: "invalid key bits",
-    Status.BAD_HANDLE: "invalid handle",
-    Status.BAD_INPUT: "invalid input",
-    Status.BUFFER_TOO_SMALL: "output buffer too small",
-    Status.ENCRYPT_FAILED: "encrypt failed",
-    Status.DECRYPT_FAILED: "decrypt failed",
-    Status.SEED_WIDTH_MIX: "seed width mismatch",
-    Status.BAD_MAC: "unknown MAC name or invalid MAC handle",
-    Status.MAC_FAILURE: "MAC verification failed",
-    Status.BLOB_MALFORMED_RECIPE: "blob profile record invalid",
-    Status.RECIPE_PRIMITIVE_UNKNOWN: (
-        "blob profile record names a primitive absent from the local registries"
-    ),
-    Status.UNKNOWN_PROFILE: "unknown profile name",
-    Status.RESERVED_14: "reserved status",
-    Status.RESERVED_15: "reserved status",
-    Status.RESERVED_16: "reserved status",
-    Status.RESERVED_17: "reserved status",
-    Status.BLOB_MODE_MISMATCH: "blob mode mismatch",
-    Status.BLOB_MALFORMED: "malformed state blob",
-    Status.BLOB_VERSION_TOO_NEW: "blob version too new",
-    Status.BLOB_TOO_MANY_OPTS: "too many blob export opts",
-    Status.STREAM_TRUNCATED: "stream truncated before terminator",
-    Status.STREAM_AFTER_FINAL: "stream chunk after terminator",
-    Status.TRIPLE_CLOSED: "Triple Pipeline is closed",
-    Status.PROFILE_EXISTS: "profile name already registered",
-    Status.INTERNAL: "internal error",
-}
-
 
 def status_from(code: int) -> Status:
     """Maps a raw return code onto :class:`Status`; unknown codes

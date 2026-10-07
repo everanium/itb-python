@@ -95,6 +95,13 @@ class ErrorsTest(unittest.TestCase):
                 wire = sender.encrypt_message(plain)
                 self.assertEqual(receiver.decrypt_message(wire), plain)
 
+    def test_unknown_drbg_is_recipe_primitive_unknown(self) -> None:
+        opts = itb.Opts().with_drbg("nope")
+        with self.assertRaises(itb.ItbError) as ctx:
+            itb.Pipeline.init("singlemsg-triple-mac-v1", opts)
+        self.assertEqual(ctx.exception.status, itb.Status.RECIPE_PRIMITIVE_UNKNOWN)
+        self.assertIn("nope", ctx.exception.message)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -39,14 +39,20 @@ _p_int = ctypes.POINTER(ctypes.c_int)
 # are accepted.
 _c_handle = ctypes.c_size_t
 _p_handle = ctypes.POINTER(ctypes.c_size_t)
+_p_int64 = ctypes.POINTER(ctypes.c_int64)
 
 # name -> (argtypes, restype). Every prototype mirrors the
 # ITB_Triple_* exports of cmd/cshared.
 _PROTOTYPES: dict[str, tuple[list[object], object]] = {
     "ITB_Version": ([_c_char_p, _c_size_t, _p_size_t], _c_int),
+    "ITB_DRBGAutoTier": ([_c_char_p, _c_size_t, _p_size_t], _c_int),
     "ITB_LastError": ([_c_char_p, _c_size_t, _p_size_t], _c_int),
     "ITB_SetMemoryLimit": ([_c_int64], _c_int64),
     "ITB_SetGCPercent": ([_c_int], _c_int),
+    "ITB_SetGOMAXPROCS": ([_c_int], _c_int),
+    "ITB_WriteHeapProfile": ([_c_char_p], _c_int),
+    "ITB_PoolStatsLen": ([], _c_int),
+    "ITB_PoolStats": ([_p_int64, _c_size_t, _p_size_t], _c_int),
     "ITB_Triple_Init": (
         [_c_char_p, _c_char_p, _c_char_p, _c_size_t, _p_size_t, _p_handle],
         _c_int,
@@ -117,6 +123,7 @@ _PROTOTYPES: dict[str, tuple[list[object], object]] = {
     "ITB_Triple_Register": ([_c_char_p, _c_char_p], _c_int),
     "ITB_Triple_Lookup": ([_c_char_p, _c_char_p, _c_size_t, _p_size_t], _c_int),
     "ITB_Triple_Profiles": ([_c_char_p, _c_size_t, _p_size_t], _c_int),
+    "ITB_Triple_HashNames": ([_c_char_p, _c_size_t, _p_size_t], _c_int),
     "ITB_Triple_EncryptStreamBegin": ([_c_handle, _p_handle], _c_int),
     "ITB_Triple_DecryptStreamBegin": ([_c_handle, _p_handle], _c_int),
     "ITB_Triple_StreamWrite": ([_c_handle, _c_char_p, _c_size_t], _c_int),

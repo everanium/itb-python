@@ -1,0 +1,6 @@
+# Byte-code caches of the utility's units. The utility has no compiled
+# artefact of its own; this keeps the caches out of the index even when
+# the tree is consumed outside the repository root.
+__pycache__/
+*.pyc
+*.pyo

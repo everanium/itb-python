@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 #
-# build.sh -- one-step build for the Python binding's libitb3.so
-# dependency. Prerequisites (Go, Python 3.10+) must be installed
-# separately; see README.md "Prerequisites" section.
+# One-step build for the Python binding's libitb3.so dependency.
+# Prerequisites (Go, Python 3.10+) must be installed separately;
+# see README.md "Prerequisites" section.
 #
 # Every artefact this binding owns is removed before the build, so
 # nothing in the tree predates the invocation.
@@ -122,17 +122,17 @@ go build -trimpath "${TAGS[@]}" -buildmode=c-shared \
     -o dist/linux-amd64/libitb3.so ./cmd/cshared
 
 cd "$REPO_ROOT/bindings/python"
-echo "==> compile-checking the itb3 package, the tests, the benches and eitb"
+echo "==> compile-checking the itb3 package, the tests, the benches, eitb and loop"
 # compileall reports a missing directory on stderr and still exits 0, so
 # every target is asserted to exist first: a directory that moves has to
 # fail the build rather than silently drop out of the compile check.
-for d in itb3 tests benches eitb; do
+for d in itb3 tests benches eitb loop; do
     if [[ ! -d "$d" ]]; then
         echo "build.sh: expected directory '$d' is missing" >&2
         exit 1
     fi
 done
-python3 -m compileall -q itb3 tests benches eitb
+python3 -m compileall -q itb3 tests benches eitb loop
 
 echo "==> Python binding loads libitb3.so at runtime via ctypes; no further build step."
 echo "==> ready: ./run_tests.sh"

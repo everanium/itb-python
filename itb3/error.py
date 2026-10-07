@@ -22,8 +22,6 @@ class ItbError(Exception):
         self.message = message
         if status is None:
             text = f"itb: {message}"
-        elif message:
-            text = f"itb: status={int(status)} ({status.label()}): {message}"
         else:
-            text = f"itb: status={int(status)} ({status.label()})"
+            text = f"itb: status={int(status)}: {message}"
         super().__init__(text)
