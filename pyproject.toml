@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "libitb3"
-version = "0.5.1"
+version = "0.5.5"
 description = "ITB Symmetric Cipher Construction with Ambiguity-Based Security - Python"
 readme = "README.md"
 license = "Apache-2.0"
