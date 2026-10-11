@@ -82,7 +82,7 @@ palette, worker cap). The resolved shape is written into the blob, so
 the receiver loads it with no opts of its own:
 
 ```python
-opts = itb.Opts().with_chunk_size(65536).with_wrapper(False)
+opts = itb.Opts().with_mode(2).with_chunk_size(65536).with_wrapper(False)
 sender = itb.Pipeline.init("singlemsg-triple-mac-v1", opts)
 receiver = itb.Pipeline.load(sender.save())
 ```

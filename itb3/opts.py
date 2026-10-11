@@ -22,6 +22,10 @@ class Opts:
     def __init__(self) -> None:
         self._pairs: list[tuple[str, str]] = []
 
+    def with_mode(self, n: int) -> Opts:
+        """Container floor sizing mode (1 per-region, 2 per-container)."""
+        return self.with_raw("mode", str(n))
+
     def with_perm_master(self, master: bytes | bytearray | memoryview) -> Opts:
         """Hex-encodes the parallax master override (``pm``)."""
         return self.with_raw("pm", bytes(master).hex())

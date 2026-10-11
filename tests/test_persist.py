@@ -61,12 +61,20 @@ class PersistTest(unittest.TestCase):
         self.assertIn("keybits", record)
         self.assertIn("nonce_bits", record)
         self.assertIn("barrier_fill", record)
+        self.assertEqual(record["container_mode"], 1)
         looked = itb.lookup(PROFILE)
         self.assertNotIn("nonce_bits", looked)
         self.assertNotIn("barrier_fill", looked)
+        self.assertNotIn("container_mode", looked)
         recipe = {k: v for k, v in record.items()
                   if k not in ("nonce_bits", "barrier_fill", "container_mode")}
         self.assertEqual(recipe, looked)
+
+    def test_inspect_opts_mode(self) -> None:
+        opts = itb.Opts().with_mode(2)
+        with itb.Pipeline.init(PROFILE, opts) as pipe:
+            record = itb.inspect(pipe.save())
+        self.assertEqual(record["container_mode"], 2)
 
     def test_inspect_rejects_garbage(self) -> None:
         with self.assertRaises(itb.ItbError) as ctx:

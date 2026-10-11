@@ -44,7 +44,7 @@ from .runtime import (
 from .status import Status
 from .stream import DecryptStream, EncryptStream
 
-__version__ = "0.5.5"
+__version__ = "0.5.6"
 
 __all__ = [
     "DecryptStream",

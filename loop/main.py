@@ -37,7 +37,6 @@ then the partial summary prints.
 
 from __future__ import annotations
 
-import json
 import os
 import signal
 import sys
@@ -513,21 +512,6 @@ def _log_pipeline_initialised(profile: str, blob: bytes) -> None:
     )
 
 
-def _edit_inner_blob_mode(blob: bytes, target_mode: int) -> bytes:
-    """Returns a copy of a wrap-layer session blob whose inner blob's
-    "mode" field is set to target_mode (1 = per-region, 2 =
-    per-container). The wrap layer's profile record carries its own
-    "mode" (a string); the target is the inner blob's ("ib") integer
-    field. Raises ValueError when the blob is not the expected JSON
-    object or carries no inner blob mode field."""
-    doc = json.loads(blob)
-    inner = doc.get("ib") if isinstance(doc, dict) else None
-    if not isinstance(inner, dict) or "mode" not in inner:
-        raise ValueError("inner blob mode field not found")
-    inner["mode"] = target_mode
-    return json.dumps(doc, separators=(",", ":")).encode("utf-8")
-
-
 def _fill_keystream_layers(name: str, opts: itb.Opts, want_parallax: bool,
                            want_wrapper: bool) -> int:
     """Folds a keystream primitive into opts for any layer the named
@@ -577,6 +561,7 @@ def _build_pipeline(cfg: Config, profile: str) -> tuple[itb.Pipeline, bytes] | N
     reopens use the retained blob; save is never called again."""
     opts = (
         itb.Opts()
+        .with_mode(cfg.blob_mode)
         .with_inner_hash(cfg.hash)
         .with_mac_name(cfg.mac)
         .with_parallax(cfg.parallax)
@@ -607,23 +592,6 @@ def _build_pipeline(cfg: Config, profile: str) -> tuple[itb.Pipeline, bytes] | N
         _err(f"Save({profile}): {status_detail(exc)}")
         pipe.free()
         return None
-    if cfg.blob_mode == 2:
-        # The sizing mode is not an Opts knob: the Init blob is edited
-        # and the pipeline reopened from it, so the retained blob (the
-        # one blob-cycle reopens from) carries the edited mode.
-        try:
-            edited = _edit_inner_blob_mode(blob, 2)
-        except ValueError as exc:
-            _err(f"rewrite blob mode: {exc}")
-            pipe.free()
-            return None
-        pipe.free()
-        try:
-            pipe = itb.Pipeline.load(edited)
-        except itb.ItbError as exc:
-            _err(f"reload Mode 2 blob: {status_detail(exc)}")
-            return None
-        blob = edited
     _log_pipeline_initialised(profile, blob)
     return pipe, blob
 
