@@ -57,6 +57,21 @@ _PROTOTYPES: dict[str, tuple[list[object], object]] = {
         [_c_char_p, _c_char_p, _c_char_p, _c_size_t, _p_size_t, _p_handle],
         _c_int,
     ),
+    "ITB_Triple_InitKeys": (
+        [
+            _c_char_p,
+            _c_char_p,
+            _c_char_p,
+            _c_size_t,
+            _p_size_t,
+            _c_size_t,
+            _c_char_p,
+            _c_size_t,
+            _p_size_t,
+            _p_handle,
+        ],
+        _c_int,
+    ),
     "ITB_Triple_Load": (
         [
             _c_char_p,

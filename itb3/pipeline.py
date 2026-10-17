@@ -6,7 +6,7 @@ from __future__ import annotations
 import ctypes
 import json
 import os
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from types import TracebackType
 from typing import Any, BinaryIO
 
@@ -82,11 +82,11 @@ class Pipeline:
     """
 
     def __init__(self, handle: int) -> None:
-        # Not part of the public API — use init() / load() / load_f().
+        # Not part of the public API — use init() / init_keys() / load() / load_f().
         self._handle = handle
 
     @classmethod
-    def init(cls, profile: str, opts: Opts | None = None) -> Pipeline:
+    def init(cls, profile: str, opts: Opts | str | None = None) -> Pipeline:
         """Constructs a fresh Pipeline against the named profile. The
         session blob is available through :meth:`save`. On a
         blob-buffer retry the Init re-runs and yields a fresh session
@@ -94,7 +94,8 @@ class Pipeline:
         returning)."""
         s = _ffi.syms()
         profile_b = profile.encode("utf-8")
-        opts_b = (opts or Opts()).build().encode("utf-8")
+        opts_str = opts if isinstance(opts, str) else (opts or Opts()).build()
+        opts_b = opts_str.encode("utf-8")
         handle = ctypes.c_size_t(0)
 
         def call(buf: ctypes.Array[ctypes.c_char], n: ctypes.c_size_t) -> int:
@@ -110,6 +111,61 @@ class Pipeline:
             )
 
         _retry_once(_BLOB_CAP, call)
+        return cls(handle.value)
+
+    @classmethod
+    def init_keys(
+        cls,
+        profile: str,
+        masters: Sequence[Buffer],
+        opts: Opts | str | None = None,
+    ) -> Pipeline:
+        """Deterministically constructs a Pipeline from eight
+        caller-supplied master keys (one per canonical seed slot 0..7)
+        against the named profile and options. The eight master keys
+        must come from independent entropy or key-agreement sources;
+        never derive all eight keys from a single secret or a single
+        KDF parent key."""
+        s = _ffi.syms()
+        profile_b = profile.encode("utf-8")
+        opts_str = opts if isinstance(opts, str) else (opts or Opts()).build()
+        opts_b = opts_str.encode("utf-8")
+        masters_b = [_ffi.as_bytes(m) for m in masters]
+        count = len(masters_b)
+        total_len = sum(len(m) for m in masters_b)
+        flat_buf = ctypes.create_string_buffer(max(total_len, 1))
+        offset = 0
+        for m in masters_b:
+            n_m = len(m)
+            if n_m > 0:
+                flat_buf[offset : offset + n_m] = m
+                offset += n_m
+        lens_arr = (
+            (ctypes.c_size_t * count)(*(len(m) for m in masters_b))
+            if count > 0
+            else None
+        )
+        handle = ctypes.c_size_t(0)
+        try:
+            def call(buf: ctypes.Array[ctypes.c_char], n: ctypes.c_size_t) -> int:
+                return int(
+                    s.lib.ITB_Triple_InitKeys(
+                        profile_b,
+                        opts_b,
+                        flat_buf,
+                        total_len,
+                        lens_arr,
+                        count,
+                        buf,
+                        len(buf),
+                        ctypes.byref(n),
+                        ctypes.byref(handle),
+                    )
+                )
+
+            _retry_once(_BLOB_CAP, call)
+        finally:
+            ctypes.memset(flat_buf, 0, len(flat_buf))
         return cls(handle.value)
 
     @classmethod

@@ -24,6 +24,27 @@ class PersistTest(unittest.TestCase):
                 wire = sender.encrypt_message(b"in-memory persist")
                 self.assertEqual(receiver.decrypt_message(wire), b"in-memory persist")
 
+    def test_init_keys_deterministic_and_errors(self) -> None:
+        masters = [bytes([0x11 * (i + 1)]) * 32 for i in range(8)]
+        with itb.Pipeline.init_keys(PROFILE, masters) as p1, itb.Pipeline.init_keys(
+            PROFILE, masters
+        ) as p2:
+            self.assertEqual(p1.save(), p2.save())
+            wire = p1.encrypt_message(b"deterministic init_keys")
+            self.assertEqual(p2.decrypt_message(wire), b"deterministic init_keys")
+
+        dup_masters = list(masters)
+        dup_masters[1] = dup_masters[0]
+        with self.assertRaises(itb.ItbError) as ctx:
+            itb.Pipeline.init_keys(PROFILE, dup_masters)
+        self.assertEqual(ctx.exception.status, itb.Status.BAD_INPUT)
+
+        short_masters = list(masters)
+        short_masters[0] = b"\x11" * 8
+        with self.assertRaises(itb.ItbError) as ctx:
+            itb.Pipeline.init_keys(PROFILE, short_masters)
+        self.assertEqual(ctx.exception.status, itb.Status.BAD_INPUT)
+
     def test_save_f_load_f_round_trip(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = os.path.join(tmp, "session.blob")

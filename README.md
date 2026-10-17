@@ -13,7 +13,7 @@ dependencies; the `.so` / `.dylib` / `.dll` is resolved and dispatched
 at first use. Every hash-name / MAC-name / cipher-name / profile-name
 is an opaque string passed through to Go for validation; the binding
 carries no ITB construction logic. The public surface is one
-`Pipeline` class (init / load / load_f / save / save_f / rekey /
+`Pipeline` class (init / init_keys / load / load_f / save / save_f / rekey /
 max_workers / close, Single Message encrypt / decrypt, one-shot
 and incremental stream sessions with file-object pumps), an `Opts`
 query-string builder for `init`, the profile-catalogue functions
@@ -86,6 +86,8 @@ opts = itb.Opts().with_mode(2).with_chunk_size(65536).with_wrapper(False)
 sender = itb.Pipeline.init("singlemsg-triple-mac-v1", opts)
 receiver = itb.Pipeline.load(sender.save())
 ```
+
+`Pipeline.init_keys` constructs a `Pipeline` deterministically from eight caller-supplied master keys (one per seed slot `0..7`) via per-slot KDF, so two peers holding the same eight master keys derive identical `Pipeline` instances without exchanging a session blob. The eight master keys must come from independent entropy or key-agreement sources — never derive all eight keys from a single secret or a single KDF parent key.
 
 `Pipeline.rekey` rotates the parallax + wrapper masters mid-session
 (the eight ITB seeds and MAC key are fixed for the session lifetime
