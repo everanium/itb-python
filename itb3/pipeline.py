@@ -51,6 +51,30 @@ def _retry_once(
     return buf.raw[: n.value]
 
 
+def _retry_once_secret(
+    cap: int,
+    call: Callable[[ctypes.Array[ctypes.c_char], ctypes.c_size_t], int],
+    *,
+    discard: bool = False,
+) -> bytes:
+    """Cold-path counterpart of :func:`_retry_once` for session blobs
+    (``init`` / ``init_keys`` / ``save`` / ``rekey``): zeroes the
+    ``ctypes`` staging buffer before release, and when ``discard`` is
+    ``True`` skips materialising a Python ``bytes`` copy."""
+    buf = ctypes.create_string_buffer(cap)
+    n = ctypes.c_size_t(0)
+    try:
+        rc = call(buf, n)
+        if rc == int(Status.BUFFER_TOO_SMALL) and n.value > cap:
+            ctypes.memset(buf, 0, len(buf))
+            buf = ctypes.create_string_buffer(n.value)
+            rc = call(buf, n)
+        _ffi.check(rc)
+        return b"" if discard else buf.raw[: n.value]
+    finally:
+        ctypes.memset(buf, 0, len(buf))
+
+
 def _masters(
     masters: tuple[Buffer, Buffer] | None,
 ) -> tuple[bytes, bytes, int]:
@@ -110,7 +134,7 @@ class Pipeline:
                 )
             )
 
-        _retry_once(_BLOB_CAP, call)
+        _retry_once_secret(_BLOB_CAP, call, discard=True)
         return cls(handle.value)
 
     @classmethod
@@ -163,7 +187,7 @@ class Pipeline:
                     )
                 )
 
-            _retry_once(_BLOB_CAP, call)
+            _retry_once_secret(_BLOB_CAP, call, discard=True)
         finally:
             ctypes.memset(flat_buf, 0, len(flat_buf))
         return cls(handle.value)
@@ -235,7 +259,7 @@ class Pipeline:
                 s.lib.ITB_Triple_Save(self._handle, buf, len(buf), ctypes.byref(n))
             )
 
-        return _retry_once(_BLOB_CAP, call)
+        return _retry_once_secret(_BLOB_CAP, call)
 
     def save_f(self, path: str | os.PathLike[str]) -> None:
         """Writes the current session blob to ``path`` inside the
@@ -265,7 +289,7 @@ class Pipeline:
                 )
             )
 
-        return _retry_once(_BLOB_CAP, call)
+        return _retry_once_secret(_BLOB_CAP, call)
 
     def max_workers(self, n: int) -> None:
         """Sets the worker cap for every subsequent cipher call. ``n``
