@@ -127,6 +127,8 @@ FLAGS: tuple[tuple[str, str, int, object, str], ...] = (
      "concurrent workers (1..10); on runtimes without parallelism values above 1 are clamped to 1"),
     ("hash", "string", STRING, "areion512",
      "inner ITB hash primitive name"),
+    ("interlock", "string", STRING, "",
+     "Interlocked Barrier chunk width: 48 | 168; empty = profile default (48; 168 requires 512-bit hash)"),
     ("iterations", "int", INT64, 0,
      "fixed per-worker iteration count; 0 = duration-based"),
     ("json-output", "", BOOL, False,
@@ -403,6 +405,12 @@ def parse_flags(argv: list[str]) -> tuple[int, Config]:
         return -1, cfg
     # Validated by Init: the C ABI enumerates no DRBG names.
     cfg.drbg = str(raw["drbg"])
+    cfg.interlock = str(raw["interlock"])
+    if cfg.interlock not in ("", "48", "168"):
+        _err(
+            f'--interlock must be 48 | 168 (or empty = profile default), got "{cfg.interlock}"'
+        )
+        return -1, cfg
     chunk_size = parse_size(str(raw["chunk-size"]))
     if chunk_size is None:
         _err(f'--chunk-size: invalid size "{raw["chunk-size"]}"')
@@ -509,6 +517,7 @@ def _log_pipeline_initialised(profile: str, blob: bytes) -> None:
         f"wrapper={on_off(bool(record.get('wrapper', False)))}"
         + (" container-mode=2" if record.get("container_mode") == 2 else "")
         + (f" drbg={record['drbg']}" if _record_str(record, "drbg") != "-" else "")
+        + (f" interlock={record['interlock']}" if _record_str(record, "interlock") != "-" else "")
     )
 
 
@@ -570,6 +579,7 @@ def _build_pipeline(cfg: Config, profile: str) -> tuple[itb.Pipeline, bytes] | N
         .with_nonce_bits(cfg.nonce_bits)
         .with_barrier_fill(cfg.barrier_fill)
         .with_drbg(cfg.drbg)
+        .with_interlock(cfg.interlock)
         .with_chunk_size(cfg.chunk_size)
     )
     if cfg.profile:
@@ -650,6 +660,7 @@ def run(argv: list[str]) -> int:
         f"json-output={'true' if cfg.json_output else 'false'}"
         + (f" blob-mode={cfg.blob_mode}" if cfg.blob_mode != 1 else "")
         + (f" drbg={cfg.drbg}" if cfg.drbg else "")
+        + (f" interlock={cfg.interlock}" if cfg.interlock else "")
     )
     log_line(
         "policy: microbatch-tiers="

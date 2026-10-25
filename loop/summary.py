@@ -271,6 +271,7 @@ def _emit_json(
         + ',"blob_mode":%d' % cfg.blob_mode
         + ',"drbg":%s' % _js(cfg.drbg)
         + ',"drbg_auto_tier":%s' % _js(itb.drbg_auto_tier())
+        + ',"interlock":%s' % _js(cfg.interlock)
         + ',"chunk_size_bytes":%d' % cfg.chunk_size
         + ',"barrier_fill":%d' % cfg.barrier_fill
         + ',"parallax":"%s"' % on_off(cfg.parallax)

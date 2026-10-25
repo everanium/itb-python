@@ -78,11 +78,13 @@ assert plain == b"any text or binary data"
 
 The `Opts` builder overrides the profile default at `init` (chunk
 size, outer cipher, parallax on/off, wrapper on/off, MAC name,
-palette, worker cap). The resolved shape is written into the blob, so
-the receiver loads it with no opts of its own:
+palette, worker cap, `interlock` (`"48"` | `"168"`, `""` = default
+48-bit; `"168"` requires a 512-bit hash)). The resolved shape is
+written into the blob, so the receiver loads it with no opts of its
+own:
 
 ```python
-opts = itb.Opts().with_mode(2).with_chunk_size(65536).with_wrapper(False)
+opts = itb.Opts().with_mode(2).with_interlock("168").with_chunk_size(65536).with_wrapper(False)
 sender = itb.Pipeline.init("singlemsg-triple-mac-v1", opts)
 receiver = itb.Pipeline.load(sender.save())
 ```

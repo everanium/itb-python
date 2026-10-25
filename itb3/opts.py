@@ -26,6 +26,10 @@ class Opts:
         """Container floor sizing mode (1 per-region, 2 per-container)."""
         return self.with_raw("mode", str(n))
 
+    def with_interlock(self, width: str) -> Opts:
+        """Interlocked Barrier chunk width (``"48"`` or ``"168"``)."""
+        return self.with_raw("interlock", width)
+
     def with_perm_master(self, master: bytes | bytearray | memoryview) -> Opts:
         """Hex-encodes the parallax master override (``pm``)."""
         return self.with_raw("pm", bytes(master).hex())

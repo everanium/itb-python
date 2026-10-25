@@ -153,6 +153,25 @@ class PersistTest(unittest.TestCase):
         itb.register("python-binding-test-drbg-copy", recipe)
         self.assertEqual(itb.lookup("python-binding-test-drbg-copy")["drbg"], "csprng")
 
+    def test_interlock_168_round_trip_and_inspect(self) -> None:
+        opts = itb.Opts().with_interlock("168")
+        with itb.Pipeline.init(PROFILE, opts) as sender:
+            plain = b"interlock 168 round trip"
+            wire = sender.encrypt_message(plain)
+            self.assertEqual(sender.decrypt_message(wire), plain)
+            blob = sender.save()
+            self.assertEqual(itb.inspect(blob)["interlock"], "168")
+            with itb.Pipeline.load(blob) as receiver:
+                self.assertEqual(receiver.decrypt_message(wire), plain)
+
+        for bad_opts in (
+            itb.Opts().with_inner_hash("blake3").with_interlock("168"),
+            itb.Opts().with_interlock("96"),
+        ):
+            with self.assertRaises(itb.ItbError) as ctx:
+                itb.Pipeline.init(PROFILE, bad_opts)
+            self.assertEqual(ctx.exception.status, itb.Status.BAD_INPUT)
+
 
 if __name__ == "__main__":
     unittest.main()
