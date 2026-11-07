@@ -112,7 +112,7 @@ FLAGS: tuple[tuple[str, str, int, object, str], ...] = (
     ("blob-cycle-every", "int", INT64, 0,
      "reopen each pipeline from its session blob every N iterations per worker; 0 = never"),
     ("blob-mode", "int", INT, 1,
-     "container floor sizing mode: 1 (per-region, default) | 2 (per-container)"),
+     "container floor sizing mode: 1 (per-region, default) | 2 (per-container) | 3 (gauss-posit)"),
     ("chunk-size", "string", STRING, "0",
      "streaming chunk-size budget (e.g. 4MB); 0 = profile default; inert for pure message shape"),
     ("drbg", "string", STRING, "",
@@ -393,8 +393,11 @@ def parse_flags(argv: list[str]) -> tuple[int, Config]:
         _err(f"--nonce-bits must be 128 | 256 | 512 (or 0 = profile default), got {cfg.nonce_bits}")
         return -1, cfg
     cfg.blob_mode = int(raw["blob-mode"])
-    if cfg.blob_mode not in (1, 2):
-        _err(f"--blob-mode must be 1 (per-region) | 2 (per-container), got {cfg.blob_mode}")
+    if cfg.blob_mode not in (1, 2, 3):
+        _err(
+            "--blob-mode must be 1 (per-region) | 2 (per-container) | 3 (gauss-posit), "
+            f"got {cfg.blob_mode}"
+        )
         return -1, cfg
     cfg.barrier_fill = int(raw["barrier-fill"])
     if cfg.barrier_fill not in (0, 1, 2, 4, 8, 16, 32):
@@ -515,7 +518,11 @@ def _log_pipeline_initialised(profile: str, blob: bytes) -> None:
         f"mac={_record_str(record, 'mac')} "
         f"parallax={on_off(bool(record.get('parallax', False)))} "
         f"wrapper={on_off(bool(record.get('wrapper', False)))}"
-        + (" container-mode=2" if record.get("container_mode") == 2 else "")
+        + (
+            f" container-mode={record['container_mode']}"
+            if record.get("container_mode") in (2, 3)
+            else ""
+        )
         + (f" drbg={record['drbg']}" if _record_str(record, "drbg") != "-" else "")
         + (f" interlock={record['interlock']}" if _record_str(record, "interlock") != "-" else "")
     )

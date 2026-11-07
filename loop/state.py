@@ -60,7 +60,7 @@ class Config:
     profile: str = ""  # empty = shape-based profile pair
     key_bits: int = 0  # 0 = profile default
     nonce_bits: int = 0  # 0 = profile default
-    blob_mode: int = 1  # container floor sizing mode: 1 (per-region, default) | 2 (per-container)
+    blob_mode: int = 1  # container floor sizing mode: 1 (per-region, default) | 2 (per-container) | 3 (gauss-posit)
     chunk_size: int = 0  # 0 = profile default
     barrier_fill: int = 0  # 0 = profile default
     drbg: str = ""  # DRBG fill primitive; "" = profile default (auto tier)

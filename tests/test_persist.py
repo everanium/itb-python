@@ -96,6 +96,10 @@ class PersistTest(unittest.TestCase):
         with itb.Pipeline.init(PROFILE, opts) as pipe:
             record = itb.inspect(pipe.save())
         self.assertEqual(record["container_mode"], 2)
+        opts3 = itb.Opts().with_mode(3)
+        with itb.Pipeline.init(PROFILE, opts3) as p3:
+            record3 = itb.inspect(p3.save())
+        self.assertEqual(record3["container_mode"], 3)
 
     def test_inspect_rejects_garbage(self) -> None:
         with self.assertRaises(itb.ItbError) as ctx:
